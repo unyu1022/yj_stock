@@ -2,6 +2,7 @@ import { remember } from "./cache.js";
 import { metricDefinitions, percent, round, toNumber } from "./metrics.js";
 
 const ONE_DAY = 24 * 60 * 60 * 1000;
+const HALF_DAY = 12 * 60 * 60 * 1000;
 const SEC_TICKERS_URL = "https://www.sec.gov/files/company_tickers_exchange.json";
 const ALPHA_VANTAGE_URL = "https://www.alphavantage.co/query";
 
@@ -66,22 +67,30 @@ export async function searchUSStocks(query, env) {
 
 async function alphaFetch(params, env) {
   const key = ensureAlphaKey(env);
-  const query = new URLSearchParams({ ...params, apikey: key });
-  const response = await fetch(`${ALPHA_VANTAGE_URL}?${query.toString()}`);
-  const data = await response.json();
-  if (!response.ok) {
-    throw new Error(`Alpha Vantage 조회 실패: HTTP ${response.status}`);
-  }
-  if (data.Note) {
-    throw new Error(`Alpha Vantage 요청 제한: ${data.Note}`);
-  }
-  if (data.Information) {
-    throw new Error(data.Information);
-  }
-  if (data["Error Message"]) {
-    throw new Error(data["Error Message"]);
-  }
-  return data;
+  const cacheKey = `alpha:${new URLSearchParams(params).toString()}`;
+
+  return remember(cacheKey, HALF_DAY, async () => {
+    const query = new URLSearchParams({ ...params, apikey: key });
+    const response = await fetch(`${ALPHA_VANTAGE_URL}?${query.toString()}`);
+    const data = await response.json();
+    if (!response.ok) {
+      throw new Error(`Alpha Vantage 조회 실패: HTTP ${response.status}`);
+    }
+    if (data.Note) {
+      throw new Error("Alpha Vantage 무료 호출 제한에 걸렸습니다. 잠시 후 다시 시도하거나, 같은 종목은 잠시 뒤 재조회해 주세요.");
+    }
+    if (data.Information) {
+      throw new Error(data.Information);
+    }
+    if (data["Error Message"]) {
+      throw new Error(data["Error Message"]);
+    }
+    return data;
+  });
+}
+
+async function wait(ms) {
+  await new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function parseQuarterDateLabel(dateString) {
@@ -196,13 +205,15 @@ export async function getUSStockData(code, env) {
     throw new Error("해당 미국 종목을 찾지 못했습니다.");
   }
 
-  const [overview, incomeStatement, balanceSheet, earnings, dailyAdjusted] = await Promise.all([
-    alphaFetch({ function: "OVERVIEW", symbol: code }, env),
-    alphaFetch({ function: "INCOME_STATEMENT", symbol: code }, env),
-    alphaFetch({ function: "BALANCE_SHEET", symbol: code }, env),
-    alphaFetch({ function: "EARNINGS", symbol: code }, env),
-    alphaFetch({ function: "TIME_SERIES_DAILY_ADJUSTED", symbol: code, outputsize: "full" }, env),
-  ]);
+  const overview = await alphaFetch({ function: "OVERVIEW", symbol: code }, env);
+  await wait(1100);
+  const incomeStatement = await alphaFetch({ function: "INCOME_STATEMENT", symbol: code }, env);
+  await wait(1100);
+  const balanceSheet = await alphaFetch({ function: "BALANCE_SHEET", symbol: code }, env);
+  await wait(1100);
+  const earnings = await alphaFetch({ function: "EARNINGS", symbol: code }, env);
+  await wait(1100);
+  const dailyAdjusted = await alphaFetch({ function: "TIME_SERIES_DAILY_ADJUSTED", symbol: code, outputsize: "full" }, env);
 
   const balanceMap = balanceByDate(balanceSheet);
   const earningsMap = earningsByDate(earnings);
