@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta
+      name="description"
+      content="국내 주식과 미국 주식을 검색하고 7가지 핵심 지표와 최근 1년 분기 흐름을 모바일에서 분석하는 투자 인사이트 PWA"
+    />
+    <meta name="theme-color" content="#0d2a45" />
+    <link rel="manifest" href="./manifest.webmanifest" />
+    <link rel="icon" href="./assets/icon.svg" />
+    <link rel="apple-touch-icon" href="./assets/icon.svg" />
+    <link rel="stylesheet" href="./styles.css" />
+    <title>Stock Insight PWA</title>
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="hero">
+        <p class="eyebrow">Mobile PWA</p>
+        <h1>한 종목을 깊게 보는<br />Stock Insight</h1>
+        <p class="hero-copy">
+          국내 주식과 미국 주식 중 한 종목을 선택해 7가지 핵심 지표와 최근 1년간 분기
+          흐름을 함께 분석해보세요. 현재 버전은 상세 분석 화면에 집중한 구조이며, 이후
+          API 연동으로 범위를 확장할 수 있게 설계했습니다.
+        </p>
+      </header>
+
+      <main class="content">
+        <section class="panel controls">
+          <div class="section-heading">
+            <p class="section-kicker">Step 1</p>
+            <h2>시장과 종목 선택</h2>
+          </div>
+
+          <div class="market-tabs" id="marketTabs" aria-label="시장 선택">
+            <button class="market-tab active" type="button" data-market="KR">국내 주식</button>
+            <button class="market-tab" type="button" data-market="US">미국 주식</button>
+          </div>
+
+          <label class="field-label" for="stock-search">종목 검색</label>
+          <input
+            id="stock-search"
+            class="search-input"
+            type="search"
+            placeholder="예: 삼성전자, 005930, Apple, AAPL"
+            autocomplete="off"
+          />
+          <div id="search-results" class="search-results" role="listbox" aria-label="종목 검색 결과"></div>
+          <div id="selection-summary" class="selection-summary"></div>
+        </section>
+
+        <section class="panel overview">
+          <div class="section-heading">
+            <p class="section-kicker">Step 2</p>
+            <h2>현재 평가와 전망</h2>
+          </div>
+          <div id="insightSummary" class="compare-summary empty-state">
+            종목을 선택하면 현재 평가와 전망이 표시됩니다.
+          </div>
+        </section>
+
+        <section class="panel analysis">
+          <div class="section-heading">
+            <p class="section-kicker">Step 3</p>
+            <h2>7가지 핵심 지표</h2>
+          </div>
+          <div id="metricGrid" class="metric-grid"></div>
+        </section>
+
+        <section class="panel quarterly">
+          <div class="section-heading">
+            <p class="section-kicker">Step 4</p>
+            <h2>최근 1년 분기 흐름</h2>
+          </div>
+          <div id="quarterlyTrend" class="quarterly-grid"></div>
+        </section>
+
+        <section class="panel notes">
+          <div class="section-heading">
+            <p class="section-kicker">Next</p>
+            <h2>확장 메모</h2>
+          </div>
+          <ul class="notes-list">
+            <li>현재 버전은 실데이터 상세 분석 화면에 집중한 구조입니다.</li>
+            <li>국내 주식은 OpenDART 기반으로, 미국 주식은 SEC와 Alpha Vantage 기반으로 조회합니다.</li>
+            <li>Cloudflare Workers Builds 환경에 맞게 Worker + 정적 자산 구조로 배포됩니다.</li>
+          </ul>
+        </section>
+      </main>
+    </div>
+
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>
