@@ -2,7 +2,7 @@ import { remember } from "./cache.js";
 import { metricDefinitions, percent, round, toNumber } from "./metrics.js";
 
 const ONE_DAY = 24 * 60 * 60 * 1000;
-const OPEN_DART_BASE = "https://engopendart.fss.or.kr/engapi";
+const OPEN_DART_BASE = "https://opendart.fss.or.kr/api";
 
 function ensureKey(env) {
   if (!env.OPEN_DART_API_KEY) {
@@ -47,6 +47,11 @@ async function loadCorpList(env) {
     const response = await fetch(`${OPEN_DART_BASE}/corpCode.xml?crtfc_key=${key}`);
     if (!response.ok) {
       throw new Error(`OpenDART corpCode 조회 실패: HTTP ${response.status}`);
+    }
+
+    const contentType = response.headers.get("content-type") || "";
+    if (contentType.includes("text/html")) {
+      throw new Error("OpenDART 종목 목록 응답이 HTML로 반환되었습니다. API 키 또는 엔드포인트 설정을 확인해 주세요.");
     }
 
     const xml = await unzipXml(await response.arrayBuffer());
@@ -276,9 +281,9 @@ export async function getKRStockData(code, env) {
       "ROIC는 OpenDART 재무제표 계정값으로 근사 계산했습니다.",
     ],
     sources: [
-      { label: "OpenDART Corporation Code", url: "https://engopendart.fss.or.kr/guide/detail.do?apiGrpCd=DE001&apiId=AE00004" },
-      { label: "OpenDART Single Company Indicators", url: "https://engopendart.fss.or.kr/guide/detail.do?apiGrpCd=DE003&apiId=AE00038" },
-      { label: "OpenDART Financial Statements", url: "https://engopendart.fss.or.kr/guide/detail.do?apiGrpCd=DE003&apiId=AE00036" },
+      { label: "OpenDART Corporation Code", url: "https://opendart.fss.or.kr/guide/detail.do?apiGrpCd=DS001&apiId=2019018" },
+      { label: "OpenDART Single Company Indicators", url: "https://opendart.fss.or.kr/guide/detail.do?apiGrpCd=DS003&apiId=2022001" },
+      { label: "OpenDART Financial Statements", url: "https://opendart.fss.or.kr/guide/detail.do?apiGrpCd=DS003&apiId=2019017" },
     ],
   };
 }
