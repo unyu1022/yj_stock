@@ -286,6 +286,15 @@ async function loadSearchResults(query) {
   renderSearchResults(data.items, query);
 }
 
+function renderIdleSearchState() {
+  ui.searchResults.innerHTML = `
+    <div class="search-result">
+      종목명 또는 종목코드를 입력하면 검색을 시작합니다.
+      <small>입력 전에는 한국/미국 주식 모두 자동 조회하지 않습니다.</small>
+    </div>
+  `;
+}
+
 async function loadStock(code) {
   setLoading("실데이터를 조회하고 있습니다...");
   try {
@@ -298,7 +307,7 @@ async function loadStock(code) {
     renderQuarterlyTrend(data.history, data.stock.metricDefinitions);
     renderNotes(data.notes);
     ui.searchInput.value = `${data.stock.name} (${data.stock.code})`;
-    await loadSearchResults("");
+    renderIdleSearchState();
   } catch (error) {
     renderError(error.message);
   }
@@ -306,6 +315,10 @@ async function loadStock(code) {
 
 function scheduleSearch(query) {
   clearTimeout(state.searchTimer);
+  if (!query) {
+    renderIdleSearchState();
+    return;
+  }
   state.searchTimer = setTimeout(() => {
     loadSearchResults(query).catch((error) => {
       ui.searchResults.innerHTML = `<div class="search-result"><strong>검색 실패</strong><small>${error.message}</small></div>`;
@@ -336,7 +349,7 @@ function attachEvents() {
       "국내 주식은 OpenDART 인증키가 필요합니다.",
       "미국 주식은 Alpha Vantage API 키와 SEC용 User-Agent 정보가 필요합니다.",
     ]);
-    loadSearchResults("").catch(() => {});
+    renderIdleSearchState();
   });
 
   document.body.addEventListener("click", (event) => {
@@ -361,9 +374,7 @@ function boot() {
     "미국 주식은 Alpha Vantage API 키와 SEC용 User-Agent 정보가 필요합니다.",
   ]);
   attachEvents();
-  loadSearchResults("").catch((error) => {
-    ui.searchResults.innerHTML = `<div class="search-result"><strong>초기 검색 실패</strong><small>${error.message}</small></div>`;
-  });
+  renderIdleSearchState();
   registerServiceWorker();
 }
 
