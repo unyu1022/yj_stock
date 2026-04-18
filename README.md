@@ -10,25 +10,21 @@
 - 부채비율
 - 배당수익률
 
-이 버전은 Cloudflare Pages Functions를 사용해 실데이터를 조회합니다.
+이 버전은 Cloudflare Workers Builds와 정적 자산 배포를 사용해 실데이터를 조회합니다.
 
-## 중요한 배포 변경점
+## 배포 방식
 
-이제는 `functions/` 폴더를 사용하므로 기존의 단순 대시보드 drag-and-drop 방식만으로는 충분하지 않습니다.
+Cloudflare UI가 현재 `Workers Builds` 흐름으로 연결되고 있으므로, 이 저장소는 그 방식에 맞게 구성했습니다.
 
-Cloudflare 공식 문서 기준:
+- Worker 진입점: `src/index.js`
+- 정적 자산 디렉터리: `public/`
+- API 로직: `functions/` 폴더 재사용
 
-- Pages Functions는 `Git provider 연결` 또는 `Wrangler` 배포 방식이 적합합니다.
-- Direct Upload 대시보드 업로드는 Functions를 지원하지 않습니다.
-
-권장 방식:
-
-1. GitHub 저장소 연결
-2. Cloudflare Pages에서 Git integration으로 배포
+Wrangler는 `public` 폴더를 정적 자산으로 배포하고, `/api/*` 요청은 Worker가 직접 처리합니다.
 
 ## 필요한 환경변수
 
-Cloudflare Pages 프로젝트 설정에서 아래 값을 추가하세요.
+Cloudflare Workers 프로젝트 설정에서 아래 값을 추가하세요.
 
 - `OPEN_DART_API_KEY`
   한국 OpenDART 인증키
@@ -45,15 +41,16 @@ Cloudflare Pages 프로젝트 설정에서 아래 값을 추가하세요.
 
 ## 파일 구조
 
-- `index.html`: 앱 레이아웃
-- `styles.css`: 모바일 우선 스타일
-- `app.js`: 검색, 상세 조회, 전망 렌더링
+- `public/index.html`: 앱 레이아웃
+- `public/styles.css`: 모바일 우선 스타일
+- `public/app.js`: 검색, 상세 조회, 전망 렌더링
+- `src/index.js`: Worker 진입점
 - `functions/api/search.js`: 종목 검색 API
 - `functions/api/stock.js`: 종목 상세 지표 API
 - `functions/api/health.js`: 환경변수 상태 확인 API
 - `functions/_lib/kr.js`: OpenDART 연동
 - `functions/_lib/us.js`: SEC + Alpha Vantage 연동
-- `service-worker.js`: PWA 캐시
+- `public/service-worker.js`: PWA 캐시
 
 ## 로컬 정적 확인
 
@@ -64,7 +61,7 @@ Set-Location "C:\Users\kanzi\OneDrive\Desktop\stock"
 & "C:\Users\kanzi\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe" -m http.server 4173
 ```
 
-다만 이 방식은 `functions/`를 실행하지 못하므로 실데이터 API까지는 확인되지 않습니다.
+다만 이 방식은 Worker를 실행하지 못하므로 실데이터 API까지는 확인되지 않습니다.
 
 ## 배포 후 점검
 
@@ -77,5 +74,5 @@ Set-Location "C:\Users\kanzi\OneDrive\Desktop\stock"
 예:
 
 ```text
-https://your-project.pages.dev/api/health
+https://your-worker-subdomain.workers.dev/api/health
 ```
