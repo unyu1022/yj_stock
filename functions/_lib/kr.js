@@ -179,10 +179,10 @@ function candidateReports() {
   const years = [];
   for (let year = currentYear; year >= currentYear - 3; year -= 1) {
     years.push(
-      { bsnsYear: String(year), reprtCode: "11013" },
-      { bsnsYear: String(year), reprtCode: "11012" },
-      { bsnsYear: String(year), reprtCode: "11014" },
       { bsnsYear: String(year), reprtCode: "11011" },
+      { bsnsYear: String(year), reprtCode: "11014" },
+      { bsnsYear: String(year), reprtCode: "11012" },
+      { bsnsYear: String(year), reprtCode: "11013" },
     );
   }
   return years;
