@@ -18,6 +18,7 @@ const ui = {
   screens: [...document.querySelectorAll(".tab-screen")],
   bottomTabs: [...document.querySelectorAll(".bottom-tab")],
   backtestTarget: document.querySelector("#backtestTarget"),
+  strategySelect: document.querySelector("#strategy-select"),
   holdingYears: document.querySelector("#holding-years"),
   holdingMonths: document.querySelector("#holding-months"),
   runBacktest: document.querySelector("#run-backtest"),
@@ -261,7 +262,7 @@ function renderBacktestTarget(stock) {
     return;
   }
 
-  ui.backtestTarget.textContent = `${stock.name} (${stock.code}) 기준으로 전략 조건을 준비합니다. 다음 단계에서는 기간, 진입 규칙, 리밸런싱 주기를 실제 수익률 계산과 연결할 수 있습니다.`;
+  ui.backtestTarget.textContent = `${stock.name} (${stock.code}) 기준으로 선택 전략을 검증합니다. 현재는 추세 전환과 공포지수 전략을 같은 기간의 NASDAQ Composite와 비교할 수 있습니다.`;
 }
 
 function renderBacktestIdleState() {
@@ -323,7 +324,7 @@ function renderBacktestChart(data) {
         <path d="${stockPath}" fill="none" stroke="#0d2a45" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" />
       </svg>
       <div class="chart-legend">
-        <span class="legend-item"><span class="legend-swatch stock"></span>${data.stock.name} (${data.stock.code})</span>
+        <span class="legend-item"><span class="legend-swatch stock"></span>${data.strategy.shortLabel}</span>
         <span class="legend-item"><span class="legend-swatch benchmark"></span>NASDAQ Composite (^IXIC)</span>
       </div>
     </div>
@@ -336,6 +337,12 @@ function renderBacktestSummary(data) {
 
   ui.backtestSummary.classList.remove("empty-state");
   ui.backtestSummary.innerHTML = `
+    <article class="summary-card">
+      <p class="section-kicker">Strategy</p>
+      <h3>${data.strategy.label}</h3>
+      <p>${data.stock.name} (${data.stock.code})에 적용한 결과입니다.</p>
+      <p>매매 전환 횟수 ${stock.trades ?? 0}회</p>
+    </article>
     <article class="summary-card">
       <p class="section-kicker">Selected Stock</p>
       <h3>${data.stock.name} (${data.stock.code})</h3>
@@ -377,6 +384,7 @@ async function runBacktest() {
       code: state.selectedStock.code,
       years: String(safeYears),
       months: String(safeMonths),
+      strategy: ui.strategySelect.value,
     });
     const data = await fetchJson(`/api/backtest?${params.toString()}`);
     renderBacktestSummary(data);
@@ -582,7 +590,7 @@ async function boot() {
   renderNotes([
     "미국 주식 검색은 SEC 종목 마스터를 기반으로 즉시 필터링합니다.",
     "재무제표 탭은 FMP 분기 재무와 가격 데이터를 기준으로 핵심 지표를 계산합니다.",
-    "백테스팅 탭은 선택 종목과 NASDAQ Composite를 같은 기간의 buy-and-hold 기준으로 비교합니다.",
+    "백테스팅 탭은 추세 전환과 공포지수 전략을 NASDAQ Composite와 비교합니다.",
   ]);
   renderBacktestTarget(null);
   renderBacktestIdleState();
