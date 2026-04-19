@@ -562,7 +562,29 @@ function annualizationFactor(reprtCode) {
   return 1;
 }
 
+function fillMissingShareCounts(history) {
+  let lastKnown = null;
+  for (const snapshot of history) {
+    if (snapshot.raw?.shareCount != null) {
+      lastKnown = snapshot.raw.shareCount;
+    } else if (lastKnown != null) {
+      snapshot.raw.shareCount = lastKnown;
+    }
+  }
+
+  let nextKnown = null;
+  for (let i = history.length - 1; i >= 0; i -= 1) {
+    const snapshot = history[i];
+    if (snapshot.raw?.shareCount != null) {
+      nextKnown = snapshot.raw.shareCount;
+    } else if (nextKnown != null) {
+      snapshot.raw.shareCount = nextKnown;
+    }
+  }
+}
+
 function enrichHistoricalValuation(history, prices, marketMetrics) {
+  fillMissingShareCounts(history);
   for (const snapshot of history) {
     const closePrice = closeOnOrBefore(prices, endDateFromLabel(snapshot.label));
     const shareCount = snapshot.raw?.shareCount ?? null;
