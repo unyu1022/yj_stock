@@ -595,7 +595,28 @@ function attachEvents() {
 function registerServiceWorker() {
   if (!("serviceWorker" in navigator)) return;
   window.addEventListener("load", () => {
-    navigator.serviceWorker.register("./service-worker.js");
+    let reloading = false;
+
+    navigator.serviceWorker.addEventListener("controllerchange", () => {
+      if (reloading) return;
+      reloading = true;
+      window.location.reload();
+    });
+
+    navigator.serviceWorker
+      .register("./service-worker.js")
+      .then((registration) => {
+        registration.update().catch(() => {});
+
+        const refreshRegistration = () => registration.update().catch(() => {});
+        window.setInterval(refreshRegistration, 60 * 1000);
+        document.addEventListener("visibilitychange", () => {
+          if (document.visibilityState === "visible") {
+            refreshRegistration();
+          }
+        });
+      })
+      .catch(() => {});
   });
 }
 
