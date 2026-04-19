@@ -330,3 +330,183 @@ export async function getUSStockData(code, env) {
     ],
   };
 }
+
+function sortAscendingByDate(items) {
+  return [...items].sort((a, b) => String(a.date || "").localeCompare(String(b.date || "")));
+}
+
+function subtractPeriod(date, years, months) {
+  const copy = new Date(date);
+  copy.setUTCFullYear(copy.getUTCFullYear() - years);
+  copy.setUTCMonth(copy.getUTCMonth() - months);
+  return copy;
+}
+
+function normalizePriceSeries(rawSeries) {
+  return sortAscendingByDate(Array.isArray(rawSeries) ? rawSeries : []).map((row) => ({
+    date: row.date,
+    close: toNumber(row.close) ?? toNumber(row.adjClose) ?? toNumber(row.price) ?? null,
+  }));
+}
+
+function findClosestPriceOnOrAfter(series, targetDate) {
+  const target = String(targetDate || "");
+  return series.find((row) => row.date >= target && row.close != null) || null;
+}
+
+function findClosestPriceOnOrBefore(series, targetDate) {
+  const target = String(targetDate || "");
+  for (let index = series.length - 1; index >= 0; index -= 1) {
+    const row = series[index];
+    if (row.date <= target && row.close != null) {
+      return row;
+    }
+  }
+  return null;
+}
+
+function buildBenchmarkLookup(series) {
+  let lastKnown = null;
+  const lookup = new Map();
+
+  for (const row of series) {
+    if (row.close != null) {
+      lastKnown = row.close;
+    }
+    if (lastKnown != null) {
+      lookup.set(row.date, lastKnown);
+    }
+  }
+
+  return lookup;
+}
+
+function calculatePerformance(startRow, endRow) {
+  if (!startRow?.close || !endRow?.close) {
+    throw new Error("백테스트 가격 데이터가 부족합니다.");
+  }
+
+  const totalReturn = ((endRow.close / startRow.close) - 1) * 100;
+  const days = Math.max(
+    1,
+    Math.round(
+      (new Date(`${endRow.date}T00:00:00Z`).getTime() - new Date(`${startRow.date}T00:00:00Z`).getTime()) /
+        (24 * 60 * 60 * 1000),
+    ),
+  );
+  const cagr = (Math.pow(endRow.close / startRow.close, 365 / days) - 1) * 100;
+
+  return {
+    startDate: startRow.date,
+    endDate: endRow.date,
+    startPrice: round(startRow.close),
+    endPrice: round(endRow.close),
+    totalReturn: round(totalReturn),
+    cagr: round(cagr),
+  };
+}
+
+function buildBacktestChartSeries(stockSeries, benchmarkSeries, startDate, endDate) {
+  const filteredStock = stockSeries.filter((row) => row.date >= startDate && row.date <= endDate && row.close != null);
+  const filteredBenchmark = benchmarkSeries.filter((row) => row.date >= startDate && row.date <= endDate && row.close != null);
+
+  if (!filteredStock.length || !filteredBenchmark.length) {
+    throw new Error("백테스트 차트를 만들 가격 데이터가 부족합니다.");
+  }
+
+  const stockStart = filteredStock[0].close;
+  const benchmarkLookup = buildBenchmarkLookup(filteredBenchmark);
+  const benchmarkStartRow = findClosestPriceOnOrAfter(filteredBenchmark, startDate) || filteredBenchmark[0];
+  const benchmarkStart = benchmarkStartRow?.close;
+  if (!stockStart || !benchmarkStart) {
+    throw new Error("백테스트 기준 가격을 계산하지 못했습니다.");
+  }
+
+  return filteredStock
+    .map((row) => {
+      const benchmarkClose = benchmarkLookup.get(row.date);
+      if (benchmarkClose == null) return null;
+
+      return {
+        date: row.date,
+        stockValue: round((row.close / stockStart) * 100),
+        benchmarkValue: round((benchmarkClose / benchmarkStart) * 100),
+      };
+    })
+    .filter(Boolean);
+}
+
+export async function getUSBacktestData(code, env, years = 0, months = 0) {
+  const normalizedYears = Number.isFinite(years) ? Math.max(0, Math.trunc(years)) : 0;
+  const normalizedMonths = Number.isFinite(months) ? Math.max(0, Math.trunc(months)) : 0;
+
+  if (normalizedYears === 0 && normalizedMonths === 0) {
+    throw new Error("보유 기간은 최소 1개월 이상이어야 합니다.");
+  }
+
+  const tickers = await loadUSTickers(env);
+  const stockMeta = tickers.find((item) => item.code === code);
+  if (!stockMeta) {
+    throw new Error("해당 미국 종목을 찾지 못했습니다.");
+  }
+
+  const today = new Date();
+  const fromDate = subtractPeriod(today, normalizedYears, normalizedMonths);
+  const from = fromDate.toISOString().slice(0, 10);
+  const to = today.toISOString().slice(0, 10);
+
+  const [stockPriceData, benchmarkPriceData] = await Promise.all([
+    fmpFetch("/historical-price-eod/full", { symbol: code, from, to }, env),
+    fmpFetch("/historical-price-eod/full", { symbol: "^IXIC", from, to }, env),
+  ]);
+
+  const stockSeries = normalizePriceSeries(stockPriceData);
+  const benchmarkSeries = normalizePriceSeries(benchmarkPriceData);
+
+  const stockStart = findClosestPriceOnOrAfter(stockSeries, from);
+  const stockEnd = findClosestPriceOnOrBefore(stockSeries, to);
+  const benchmarkStart = findClosestPriceOnOrAfter(benchmarkSeries, from);
+  const benchmarkEnd = findClosestPriceOnOrBefore(benchmarkSeries, to);
+
+  if (!stockStart || !stockEnd || !benchmarkStart || !benchmarkEnd) {
+    throw new Error("백테스트 기간에 필요한 가격 데이터가 부족합니다.");
+  }
+
+  const stockPerformance = calculatePerformance(stockStart, stockEnd);
+  const benchmarkPerformance = calculatePerformance(benchmarkStart, benchmarkEnd);
+  const chartSeries = buildBacktestChartSeries(
+    stockSeries,
+    benchmarkSeries,
+    stockPerformance.startDate,
+    stockPerformance.endDate,
+  );
+
+  return {
+    stock: {
+      code: stockMeta.code,
+      name: stockMeta.name,
+    },
+    period: {
+      years: normalizedYears,
+      months: normalizedMonths,
+      startDate: stockPerformance.startDate,
+      endDate: stockPerformance.endDate,
+    },
+    result: {
+      stock: stockPerformance,
+      benchmark: {
+        ...benchmarkPerformance,
+        code: "^IXIC",
+        name: "NASDAQ Composite",
+      },
+      excessCagr: round(stockPerformance.cagr - benchmarkPerformance.cagr),
+      excessReturn: round(stockPerformance.totalReturn - benchmarkPerformance.totalReturn),
+    },
+    chartSeries,
+    notes: [
+      "현재 백테스트는 선택 종목을 해당 기간 동안 단순 보유(buy and hold)했다고 가정합니다.",
+      "비교 기준은 같은 기간의 NASDAQ Composite (^IXIC) 지수입니다.",
+      "누적수익률은 시작일 대비 종료일 수익률, CAGR은 해당 기간의 연복리 수익률입니다.",
+    ],
+  };
+}
