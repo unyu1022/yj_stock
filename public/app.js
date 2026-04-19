@@ -18,6 +18,12 @@ const ui = {
   screens: [...document.querySelectorAll(".tab-screen")],
   bottomTabs: [...document.querySelectorAll(".bottom-tab")],
   backtestTarget: document.querySelector("#backtestTarget"),
+  holdingYears: document.querySelector("#holding-years"),
+  holdingMonths: document.querySelector("#holding-months"),
+  runBacktest: document.querySelector("#run-backtest"),
+  backtestSummary: document.querySelector("#backtestSummary"),
+  backtestChart: document.querySelector("#backtestChart"),
+  backtestNotes: document.querySelector("#backtestNotes"),
 };
 
 function formatMetric(value, format) {
@@ -258,6 +264,133 @@ function renderBacktestTarget(stock) {
   ui.backtestTarget.textContent = `${stock.name} (${stock.code}) 기준으로 전략 조건을 준비합니다. 다음 단계에서는 기간, 진입 규칙, 리밸런싱 주기를 실제 수익률 계산과 연결할 수 있습니다.`;
 }
 
+function renderBacktestIdleState() {
+  ui.backtestSummary.classList.add("empty-state");
+  ui.backtestSummary.textContent = "종목을 선택하고 보유 기간을 입력한 뒤 백테스트를 실행하면 결과가 표시됩니다.";
+  ui.backtestChart.classList.add("empty-state");
+  ui.backtestChart.textContent = "종목과 NASDAQ 비교 차트가 여기에 생성됩니다.";
+  ui.backtestNotes.innerHTML = "";
+}
+
+function renderBacktestLoading() {
+  ui.backtestSummary.classList.remove("empty-state");
+  ui.backtestSummary.innerHTML = `<div class="loading-card">백테스트를 계산하고 있습니다...</div>`;
+  ui.backtestChart.classList.remove("empty-state");
+  ui.backtestChart.innerHTML = `<div class="loading-card">가격 데이터와 NASDAQ 비교 차트를 준비하고 있습니다...</div>`;
+}
+
+function buildChartPath(points, key, width, height, padding, minValue, maxValue) {
+  const span = Math.max(1, maxValue - minValue);
+  return points
+    .map((point, index) => {
+      const x = padding + (index / Math.max(1, points.length - 1)) * (width - padding * 2);
+      const y = height - padding - ((point[key] - minValue) / span) * (height - padding * 2);
+      return `${index === 0 ? "M" : "L"} ${x.toFixed(2)} ${y.toFixed(2)}`;
+    })
+    .join(" ");
+}
+
+function renderBacktestChart(data) {
+  const points = data.chartSeries ?? [];
+  if (!points.length) {
+    ui.backtestChart.classList.add("empty-state");
+    ui.backtestChart.textContent = "차트를 만들 데이터가 부족합니다.";
+    return;
+  }
+
+  const values = points.flatMap((point) => [point.stockValue, point.benchmarkValue]);
+  const minValue = Math.min(...values);
+  const maxValue = Math.max(...values);
+  const width = 720;
+  const height = 320;
+  const padding = 28;
+  const stockPath = buildChartPath(points, "stockValue", width, height, padding, minValue, maxValue);
+  const benchmarkPath = buildChartPath(points, "benchmarkValue", width, height, padding, minValue, maxValue);
+  const start = points[0]?.date;
+  const end = points[points.length - 1]?.date;
+
+  ui.backtestChart.classList.remove("empty-state");
+  ui.backtestChart.innerHTML = `
+    <div class="chart-wrap">
+      <div class="chart-meta">
+        <span>기준값 100에서 시작한 상대 성과 비교</span>
+        <span>${start} ~ ${end}</span>
+      </div>
+      <svg class="chart-svg" viewBox="0 0 ${width} ${height}" role="img" aria-label="백테스트 비교 차트">
+        <line x1="${padding}" y1="${height - padding}" x2="${width - padding}" y2="${height - padding}" stroke="rgba(20,32,51,0.18)" stroke-width="1" />
+        <line x1="${padding}" y1="${padding}" x2="${padding}" y2="${height - padding}" stroke="rgba(20,32,51,0.18)" stroke-width="1" />
+        <path d="${benchmarkPath}" fill="none" stroke="#b96d2b" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" />
+        <path d="${stockPath}" fill="none" stroke="#0d2a45" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" />
+      </svg>
+      <div class="chart-legend">
+        <span class="legend-item"><span class="legend-swatch stock"></span>${data.stock.name} (${data.stock.code})</span>
+        <span class="legend-item"><span class="legend-swatch benchmark"></span>NASDAQ Composite (^IXIC)</span>
+      </div>
+    </div>
+  `;
+}
+
+function renderBacktestSummary(data) {
+  const stock = data.result.stock;
+  const benchmark = data.result.benchmark;
+
+  ui.backtestSummary.classList.remove("empty-state");
+  ui.backtestSummary.innerHTML = `
+    <article class="summary-card">
+      <p class="section-kicker">Selected Stock</p>
+      <h3>${data.stock.name} (${data.stock.code})</h3>
+      <p>누적수익률 ${stock.totalReturn}% · CAGR ${stock.cagr}%</p>
+      <p>${stock.startDate} 시작, ${stock.endDate} 종료 기준입니다.</p>
+    </article>
+    <article class="summary-card">
+      <p class="section-kicker">Benchmark</p>
+      <h3>${benchmark.name}</h3>
+      <p>누적수익률 ${benchmark.totalReturn}% · CAGR ${benchmark.cagr}%</p>
+      <p>${benchmark.startDate} 시작, ${benchmark.endDate} 종료 기준입니다.</p>
+    </article>
+    <article class="summary-card ${data.result.excessCagr >= 0 ? "outlook-card good" : "outlook-card bad"}">
+      <p class="section-kicker">Relative</p>
+      <h3>NASDAQ 대비 성과</h3>
+      <p>초과 누적수익률 ${data.result.excessReturn}%p · 초과 CAGR ${data.result.excessCagr}%p</p>
+    </article>
+  `;
+
+  ui.backtestNotes.innerHTML = (data.notes ?? []).map((note) => `<li>${note}</li>`).join("");
+}
+
+async function runBacktest() {
+  if (!state.selectedStock?.code) {
+    renderBacktestIdleState();
+    ui.backtestSummary.classList.remove("empty-state");
+    ui.backtestSummary.innerHTML = `<div class="error-card">먼저 미국 주식 종목을 선택하세요.</div>`;
+    return;
+  }
+
+  const years = Number(ui.holdingYears.value || "0");
+  const months = Number(ui.holdingMonths.value || "0");
+  const safeYears = Number.isFinite(years) ? Math.max(0, Math.trunc(years)) : 0;
+  const safeMonths = Number.isFinite(months) ? Math.max(0, Math.trunc(months)) : 0;
+
+  renderBacktestLoading();
+  try {
+    const params = new URLSearchParams({
+      code: state.selectedStock.code,
+      years: String(safeYears),
+      months: String(safeMonths),
+    });
+    const data = await fetchJson(`/api/backtest?${params.toString()}`);
+    renderBacktestSummary(data);
+    renderBacktestChart(data);
+    setActiveTab("backtest");
+  } catch (error) {
+    ui.backtestSummary.classList.remove("empty-state");
+    ui.backtestSummary.innerHTML = `<div class="error-card">${error.message}</div>`;
+    ui.backtestChart.classList.add("empty-state");
+    ui.backtestChart.textContent = "차트를 불러오지 못했습니다.";
+    ui.backtestNotes.innerHTML = "";
+  }
+}
+
 function renderError(message) {
   ui.selectionSummary.innerHTML = `<strong>조회 실패</strong><small>${message}</small>`;
   ui.insightSummary.classList.remove("empty-state");
@@ -265,6 +398,7 @@ function renderError(message) {
   ui.metricGrid.innerHTML = "";
   ui.quarterlyTrend.innerHTML = "";
   renderBacktestTarget(null);
+  renderBacktestIdleState();
 }
 
 function renderSearchResults(items, query) {
@@ -392,6 +526,7 @@ async function loadStock(code, name = "") {
     renderQuarterlyTrend(data.history, data.stock.metricDefinitions);
     renderNotes(data.notes);
     renderBacktestTarget(data.stock);
+    renderBacktestIdleState();
     ui.searchInput.value = `${data.stock.name} (${data.stock.code})`;
     renderIdleSearchState();
   } catch (error) {
@@ -430,6 +565,10 @@ function attachEvents() {
       setActiveTab(tabButton.dataset.tab);
     }
   });
+
+  ui.runBacktest.addEventListener("click", () => {
+    runBacktest();
+  });
 }
 
 function registerServiceWorker() {
@@ -443,9 +582,10 @@ async function boot() {
   renderNotes([
     "미국 주식 검색은 SEC 종목 마스터를 기반으로 즉시 필터링합니다.",
     "재무제표 탭은 FMP 분기 재무와 가격 데이터를 기준으로 핵심 지표를 계산합니다.",
-    "백테스팅 탭은 다음 단계에서 실제 전략 시뮬레이션을 붙일 수 있도록 구조를 분리해둔 상태입니다.",
+    "백테스팅 탭은 선택 종목과 NASDAQ Composite를 같은 기간의 buy-and-hold 기준으로 비교합니다.",
   ]);
   renderBacktestTarget(null);
+  renderBacktestIdleState();
   setActiveTab("fundamentals");
   attachEvents();
   renderIdleSearchState();
