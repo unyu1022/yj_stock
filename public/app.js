@@ -504,7 +504,20 @@ function filterMasterData(items, query) {
 
 async function loadSearchResults(query) {
   const master = await ensureMasterData();
-  renderSearchResults(filterMasterData(master, query), query);
+  const localMatches = filterMasterData(master, query);
+
+  try {
+    const remote = await fetchJson(`/api/search?market=US&q=${encodeURIComponent(query)}`);
+    const merged = new Map();
+    [...localMatches, ...(remote.items ?? [])].forEach((item) => {
+      const key = item.code;
+      if (!key || merged.has(key)) return;
+      merged.set(key, item);
+    });
+    renderSearchResults([...merged.values()].slice(0, 20), query);
+  } catch (error) {
+    renderSearchResults(localMatches, query);
+  }
 }
 
 function renderIdleSearchState() {
