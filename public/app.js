@@ -1,16 +1,13 @@
 const state = {
-  market: "KR",
+  market: "US",
+  activeTab: "fundamentals",
   selectedStock: null,
   stockData: null,
   searchTimer: null,
-  masterData: {
-    KR: null,
-    US: null,
-  },
+  masterData: null,
 };
 
 const ui = {
-  marketTabs: document.querySelector("#marketTabs"),
   searchInput: document.querySelector("#stock-search"),
   searchResults: document.querySelector("#search-results"),
   selectionSummary: document.querySelector("#selection-summary"),
@@ -18,6 +15,9 @@ const ui = {
   metricGrid: document.querySelector("#metricGrid"),
   quarterlyTrend: document.querySelector("#quarterlyTrend"),
   notesList: document.querySelector(".notes-list"),
+  screens: [...document.querySelectorAll(".tab-screen")],
+  bottomTabs: [...document.querySelectorAll(".bottom-tab")],
+  backtestTarget: document.querySelector("#backtestTarget"),
 };
 
 function formatMetric(value, format) {
@@ -122,9 +122,13 @@ function buildOutlook(history) {
   };
 }
 
-function renderMarketTabs() {
-  [...ui.marketTabs.querySelectorAll(".market-tab")].forEach((button) => {
-    button.classList.toggle("active", button.dataset.market === state.market);
+function setActiveTab(tab) {
+  state.activeTab = tab;
+  ui.screens.forEach((screen) => {
+    screen.classList.toggle("active", screen.dataset.screen === tab);
+  });
+  ui.bottomTabs.forEach((button) => {
+    button.classList.toggle("active", button.dataset.tab === tab);
   });
 }
 
@@ -245,12 +249,22 @@ function renderNotes(notes) {
   ui.notesList.innerHTML = notes.map((note) => `<li>${note}</li>`).join("");
 }
 
+function renderBacktestTarget(stock) {
+  if (!stock) {
+    ui.backtestTarget.textContent = "아직 종목이 선택되지 않았습니다. 먼저 미국 주식 종목을 선택하세요.";
+    return;
+  }
+
+  ui.backtestTarget.textContent = `${stock.name} (${stock.code}) 기준으로 전략 조건을 준비합니다. 다음 단계에서는 기간, 진입 규칙, 리밸런싱 주기를 실제 수익률 계산과 연결할 수 있습니다.`;
+}
+
 function renderError(message) {
   ui.selectionSummary.innerHTML = `<strong>조회 실패</strong><small>${message}</small>`;
   ui.insightSummary.classList.remove("empty-state");
   ui.insightSummary.innerHTML = `<div class="error-card">${message}</div>`;
   ui.metricGrid.innerHTML = "";
   ui.quarterlyTrend.innerHTML = "";
+  renderBacktestTarget(null);
 }
 
 function renderSearchResults(items, query) {
@@ -276,11 +290,10 @@ function renderSearchResults(items, query) {
           class="search-result"
           type="button"
           data-code="${stock.code}"
-          data-corp="${stock.corpCode ?? ""}"
           data-name="${encodeURIComponent(stock.name)}"
         >
           <strong>${stock.name} (${stock.code})</strong>
-          <small>${state.market === "KR" ? "국내 주식" : "미국 주식"} · ${stock.exchange ?? "종목 선택"}</small>
+          <small>미국 주식 · ${stock.exchange ?? "종목 선택"}</small>
         </button>
       `,
     )
@@ -310,12 +323,12 @@ async function fetchJson(url) {
   return data;
 }
 
-async function ensureMasterData(market) {
-  if (state.masterData[market]) return state.masterData[market];
+async function ensureMasterData() {
+  if (state.masterData) return state.masterData;
 
-  const data = await fetchJson(`/api/master?market=${market}`);
-  state.masterData[market] = data.items ?? [];
-  return state.masterData[market];
+  const data = await fetchJson("/api/master?market=US");
+  state.masterData = data.items ?? [];
+  return state.masterData;
 }
 
 function filterMasterData(items, query) {
@@ -348,27 +361,26 @@ function filterMasterData(items, query) {
 }
 
 async function loadSearchResults(query) {
-  const master = await ensureMasterData(state.market);
+  const master = await ensureMasterData();
   renderSearchResults(filterMasterData(master, query), query);
 }
 
 function renderIdleSearchState() {
   ui.searchResults.innerHTML = `
     <div class="search-result">
-      종목명 또는 종목코드를 입력하면 검색을 시작합니다.
+      미국 주식 종목명 또는 티커를 입력하면 검색을 시작합니다.
       <small>입력 중에는 로컬 마스터 목록에서 바로 필터링합니다.</small>
     </div>
   `;
 }
 
-async function loadStock(code, corpCode = "", name = "") {
+async function loadStock(code, name = "") {
   setLoading("실데이터를 조회하고 있습니다...");
   try {
     const params = new URLSearchParams({
-      market: state.market,
+      market: "US",
       code,
     });
-    if (corpCode) params.set("corpCode", corpCode);
     if (name) params.set("name", name);
 
     const data = await fetchJson(`/api/stock?${params.toString()}`);
@@ -379,6 +391,7 @@ async function loadStock(code, corpCode = "", name = "") {
     renderMetrics(data.stock, data.history);
     renderQuarterlyTrend(data.history, data.stock.metricDefinitions);
     renderNotes(data.notes);
+    renderBacktestTarget(data.stock);
     ui.searchInput.value = `${data.stock.name} (${data.stock.code})`;
     renderIdleSearchState();
   } catch (error) {
@@ -405,32 +418,17 @@ function attachEvents() {
     scheduleSearch(event.target.value.trim());
   });
 
-  ui.marketTabs.addEventListener("click", (event) => {
-    const button = event.target.closest(".market-tab");
-    if (!button) return;
-    state.market = button.dataset.market;
-    state.selectedStock = null;
-    state.stockData = null;
-    ui.searchInput.value = "";
-    renderMarketTabs();
-    ui.selectionSummary.innerHTML = "";
-    ui.metricGrid.innerHTML = "";
-    ui.quarterlyTrend.innerHTML = "";
-    ui.insightSummary.classList.add("empty-state");
-    ui.insightSummary.textContent = "종목을 선택하면 현재 평가와 전망이 표시됩니다.";
-    renderNotes([
-      "검색은 정적 마스터 파일을 로컬에서 필터링해 즉시 표시합니다.",
-      "국내 주식 상세 분석은 OpenDART와 시장 시세를 조합해 계산합니다.",
-      "미국 주식 상세 분석은 SEC와 FMP 데이터를 사용합니다.",
-    ]);
-    renderIdleSearchState();
-    ensureMasterData(state.market).catch(() => {});
-  });
-
   document.body.addEventListener("click", (event) => {
-    const button = event.target.closest(".search-result[data-code]");
-    if (!button) return;
-    loadStock(button.dataset.code, button.dataset.corp || "", decodeURIComponent(button.dataset.name || ""));
+    const resultButton = event.target.closest(".search-result[data-code]");
+    if (resultButton) {
+      loadStock(resultButton.dataset.code, decodeURIComponent(resultButton.dataset.name || ""));
+      return;
+    }
+
+    const tabButton = event.target.closest(".bottom-tab[data-tab]");
+    if (tabButton) {
+      setActiveTab(tabButton.dataset.tab);
+    }
   });
 }
 
@@ -442,16 +440,17 @@ function registerServiceWorker() {
 }
 
 async function boot() {
-  renderMarketTabs();
   renderNotes([
-    "검색은 정적 마스터 파일을 로컬에서 필터링해 즉시 표시합니다.",
-    "국내 주식 상세 분석은 OpenDART와 시장 시세를 조합해 계산합니다.",
-    "미국 주식 상세 분석은 SEC와 FMP 데이터를 사용합니다.",
+    "미국 주식 검색은 SEC 종목 마스터를 기반으로 즉시 필터링합니다.",
+    "재무제표 탭은 FMP 분기 재무와 가격 데이터를 기준으로 핵심 지표를 계산합니다.",
+    "백테스팅 탭은 다음 단계에서 실제 전략 시뮬레이션을 붙일 수 있도록 구조를 분리해둔 상태입니다.",
   ]);
+  renderBacktestTarget(null);
+  setActiveTab("fundamentals");
   attachEvents();
   renderIdleSearchState();
   registerServiceWorker();
-  await ensureMasterData("KR").catch(() => {});
+  await ensureMasterData().catch(() => {});
 }
 
 boot();
