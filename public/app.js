@@ -3,6 +3,10 @@ const state = {
   selectedStock: null,
   stockData: null,
   searchTimer: null,
+  masterData: {
+    KR: null,
+    US: null,
+  },
 };
 
 const ui = {
@@ -250,11 +254,16 @@ function renderError(message) {
 }
 
 function renderSearchResults(items, query) {
+  if (!query) {
+    renderIdleSearchState();
+    return;
+  }
+
   if (!items.length) {
     ui.searchResults.innerHTML = `
       <div class="search-result">
         검색 결과가 없습니다.
-        <small>${query ? "검색어를 조금 다르게 입력해보세요." : "종목명 또는 종목코드를 입력해보세요."}</small>
+        <small>검색어를 조금 다르게 입력해보세요.</small>
       </div>
     `;
     return;
@@ -263,9 +272,15 @@ function renderSearchResults(items, query) {
   ui.searchResults.innerHTML = items
     .map(
       (stock) => `
-        <button class="search-result" type="button" data-code="${stock.code}" data-corp="${stock.corpCode ?? ""}" data-name="${encodeURIComponent(stock.name)}">
+        <button
+          class="search-result"
+          type="button"
+          data-code="${stock.code}"
+          data-corp="${stock.corpCode ?? ""}"
+          data-name="${encodeURIComponent(stock.name)}"
+        >
           <strong>${stock.name} (${stock.code})</strong>
-          <small>${stock.marketLabel} · ${stock.exchange ?? stock.industry ?? "시장 정보"}</small>
+          <small>${state.market === "KR" ? "국내 주식" : "미국 주식"} · ${stock.exchange ?? "종목 선택"}</small>
         </button>
       `,
     )
@@ -281,16 +296,53 @@ async function fetchJson(url) {
   return data;
 }
 
+async function ensureMasterData(market) {
+  if (state.masterData[market]) return state.masterData[market];
+
+  const data = await fetchJson(`/api/master?market=${market}`);
+  state.masterData[market] = data.items ?? [];
+  return state.masterData[market];
+}
+
+function filterMasterData(items, query) {
+  const normalized = query.trim().toLowerCase();
+  if (!normalized) return [];
+
+  const exactCode = [];
+  const prefixCode = [];
+  const nameMatch = [];
+  const fallback = [];
+
+  for (const item of items) {
+    const code = item.code.toLowerCase();
+    const name = item.name.toLowerCase();
+    const exchange = (item.exchange || "").toLowerCase();
+    const search = `${code} ${name} ${exchange}`;
+
+    if (code === normalized) {
+      exactCode.push(item);
+    } else if (code.startsWith(normalized)) {
+      prefixCode.push(item);
+    } else if (name.startsWith(normalized)) {
+      nameMatch.push(item);
+    } else if (search.includes(normalized)) {
+      fallback.push(item);
+    }
+  }
+
+  return [...exactCode, ...prefixCode, ...nameMatch, ...fallback].slice(0, 20);
+}
+
 async function loadSearchResults(query) {
-  const data = await fetchJson(`/api/search?market=${state.market}&q=${encodeURIComponent(query)}`);
-  renderSearchResults(data.items, query);
+  const master = await ensureMasterData(state.market);
+  renderSearchResults(filterMasterData(master, query), query);
 }
 
 function renderIdleSearchState() {
   ui.searchResults.innerHTML = `
     <div class="search-result">
       종목명 또는 종목코드를 입력하면 검색을 시작합니다.
-      <small>입력 전에는 한국/미국 주식 모두 자동 조회하지 않습니다.</small>
+      <small>입력 중에는 로컬 마스터 목록에서 바로 필터링합니다.</small>
     </div>
   `;
 }
@@ -326,11 +378,12 @@ function scheduleSearch(query) {
     renderIdleSearchState();
     return;
   }
+
   state.searchTimer = setTimeout(() => {
     loadSearchResults(query).catch((error) => {
       ui.searchResults.innerHTML = `<div class="search-result"><strong>검색 실패</strong><small>${error.message}</small></div>`;
     });
-  }, 250);
+  }, 120);
 }
 
 function attachEvents() {
@@ -352,11 +405,12 @@ function attachEvents() {
     ui.insightSummary.classList.add("empty-state");
     ui.insightSummary.textContent = "종목을 선택하면 현재 평가와 전망이 표시됩니다.";
     renderNotes([
-      "현재 버전은 Cloudflare Worker를 통해 실데이터를 조회합니다.",
-      "국내 주식은 OpenDART 인증키가 필요합니다.",
-      "미국 주식은 Alpha Vantage API 키와 SEC용 User-Agent 정보가 필요합니다.",
+      "검색은 정적 마스터 파일을 로컬에서 필터링해 즉시 표시합니다.",
+      "국내 주식 상세 분석은 OpenDART와 시장 시세를 조합해 계산합니다.",
+      "미국 주식 상세 분석은 SEC와 Alpha Vantage 데이터를 사용합니다.",
     ]);
     renderIdleSearchState();
+    ensureMasterData(state.market).catch(() => {});
   });
 
   document.body.addEventListener("click", (event) => {
@@ -373,16 +427,17 @@ function registerServiceWorker() {
   });
 }
 
-function boot() {
+async function boot() {
   renderMarketTabs();
   renderNotes([
-    "현재 버전은 Cloudflare Worker를 통해 실데이터를 조회합니다.",
-    "국내 주식은 OpenDART 인증키가 필요합니다.",
-    "미국 주식은 Alpha Vantage API 키와 SEC용 User-Agent 정보가 필요합니다.",
+    "검색은 정적 마스터 파일을 로컬에서 필터링해 즉시 표시합니다.",
+    "국내 주식 상세 분석은 OpenDART와 시장 시세를 조합해 계산합니다.",
+    "미국 주식 상세 분석은 SEC와 Alpha Vantage 데이터를 사용합니다.",
   ]);
   attachEvents();
   renderIdleSearchState();
   registerServiceWorker();
+  await ensureMasterData("KR").catch(() => {});
 }
 
 boot();
