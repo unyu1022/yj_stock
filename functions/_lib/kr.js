@@ -44,28 +44,58 @@ async function unzipXml(buffer) {
 async function loadCorpList(env) {
   return remember("kr-corp-list", ONE_DAY, async () => {
     const key = ensureKey(env);
-    const response = await fetch(`${OPEN_DART_BASE}/corpCode.xml?crtfc_key=${key}`);
-    if (!response.ok) {
-      throw new Error(`OpenDART corpCode 조회 실패: HTTP ${response.status}`);
+    const collected = new Map();
+    const end = new Date();
+    const ranges = [];
+
+    for (let i = 0; i < 5; i += 1) {
+      const rangeEnd = new Date(end);
+      rangeEnd.setUTCMonth(rangeEnd.getUTCMonth() - i * 3);
+      const rangeStart = new Date(rangeEnd);
+      rangeStart.setUTCMonth(rangeStart.getUTCMonth() - 3);
+      rangeStart.setUTCDate(rangeStart.getUTCDate() + 1);
+      ranges.push({
+        bgnDe: rangeStart.toISOString().slice(0, 10).replace(/-/g, ""),
+        endDe: rangeEnd.toISOString().slice(0, 10).replace(/-/g, ""),
+      });
     }
 
-    const contentType = response.headers.get("content-type") || "";
-    if (contentType.includes("text/html")) {
-      throw new Error("OpenDART 종목 목록 응답이 HTML로 반환되었습니다. API 키 또는 엔드포인트 설정을 확인해 주세요.");
+    for (const range of ranges) {
+      let page = 1;
+      let totalPages = 1;
+
+      while (page <= totalPages) {
+        const params = new URLSearchParams({
+          crtfc_key: key,
+          bgn_de: range.bgnDe,
+          end_de: range.endDe,
+          page_no: String(page),
+          page_count: "100",
+        });
+
+        const data = await fetchJson(`${OPEN_DART_BASE}/list.json?${params.toString()}`);
+        totalPages = Math.min(Number(data.total_page || 1), 200);
+
+        for (const item of data.list ?? []) {
+          if (!item.stock_code) continue;
+          if (!collected.has(item.stock_code)) {
+            collected.set(item.stock_code, {
+              corpCode: item.corp_code,
+              code: item.stock_code,
+              name: item.corp_name,
+              marketLabel: "국내 주식",
+            });
+          }
+        }
+
+        page += 1;
+      }
     }
 
-    const xml = await unzipXml(await response.arrayBuffer());
-    const items = [...xml.matchAll(/<list>([\s\S]*?)<\/list>/g)]
-      .map((match) => match[1])
-      .map((block) => ({
-        corpCode: getTagValue(block, "corp_code"),
-        code: getTagValue(block, "stock_code"),
-        name: getTagValue(block, "corp_name"),
-        marketLabel: "국내 주식",
-      }))
-      .filter((item) => item.code);
-
-    items.sort((a, b) => a.name.localeCompare(b.name, "ko"));
+    const items = [...collected.values()].sort((a, b) => a.name.localeCompare(b.name, "ko"));
+    if (!items.length) {
+      throw new Error("OpenDART 공시 목록에서 국내 상장사 코드를 수집하지 못했습니다.");
+    }
     return items;
   });
 }
@@ -276,12 +306,12 @@ export async function getKRStockData(code, env) {
     history,
     summaryNote: summarizeKr(history),
     notes: [
-      "국내 주식 검색은 OpenDART 상장사 코드(stock_code) 기준으로 제공합니다.",
+      "국내 주식 검색은 OpenDART 최근 공시 목록에서 종목코드와 고유번호를 수집해 제공합니다.",
       "PER, PBR, ROE, 영업이익률, 부채비율, 배당수익률은 OpenDART 주요 지표 응답을 사용했습니다.",
       "ROIC는 OpenDART 재무제표 계정값으로 근사 계산했습니다.",
     ],
     sources: [
-      { label: "OpenDART Corporation Code", url: "https://opendart.fss.or.kr/guide/detail.do?apiGrpCd=DS001&apiId=2019018" },
+      { label: "OpenDART Disclosure Search", url: "https://opendart.fss.or.kr/guide/main.do?apiGrpCd=DS002" },
       { label: "OpenDART Single Company Indicators", url: "https://opendart.fss.or.kr/guide/detail.do?apiGrpCd=DS003&apiId=2022001" },
       { label: "OpenDART Financial Statements", url: "https://opendart.fss.or.kr/guide/detail.do?apiGrpCd=DS003&apiId=2019017" },
     ],
