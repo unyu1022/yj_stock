@@ -421,7 +421,7 @@ function attachEvents() {
     renderNotes([
       "검색은 정적 마스터 파일을 로컬에서 필터링해 즉시 표시합니다.",
       "국내 주식 상세 분석은 OpenDART와 시장 시세를 조합해 계산합니다.",
-      "미국 주식 상세 분석은 SEC와 Alpha Vantage 데이터를 사용합니다.",
+      "미국 주식 상세 분석은 SEC와 FMP 데이터를 사용합니다.",
     ]);
     renderIdleSearchState();
     ensureMasterData(state.market).catch(() => {});
@@ -446,7 +446,7 @@ async function boot() {
   renderNotes([
     "검색은 정적 마스터 파일을 로컬에서 필터링해 즉시 표시합니다.",
     "국내 주식 상세 분석은 OpenDART와 시장 시세를 조합해 계산합니다.",
-    "미국 주식 상세 분석은 SEC와 Alpha Vantage 데이터를 사용합니다.",
+    "미국 주식 상세 분석은 SEC와 FMP 데이터를 사용합니다.",
   ]);
   attachEvents();
   renderIdleSearchState();
