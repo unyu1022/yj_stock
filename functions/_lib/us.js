@@ -28,6 +28,18 @@ function ensureFmpKey(env) {
   return env.FMP_API_KEY;
 }
 
+function emptyMetrics() {
+  return {
+    per: null,
+    pbr: null,
+    roe: null,
+    roic: null,
+    operatingMargin: null,
+    debtRatio: null,
+    dividendYield: null,
+  };
+}
+
 async function loadUSTickers(env) {
   return remember("us-tickers", ONE_DAY, async () => {
     const response = await fetch(SEC_TICKERS_URL, { headers: secHeaders(env) });
@@ -237,12 +249,54 @@ function summarizeUS(history) {
   return `${latest.label} 기준 분기 재무와 최근 가격 흐름을 조합해 계산했습니다. 미국 종목은 SEC 종목 목록과 FMP 재무/가격 데이터를 함께 사용합니다.`;
 }
 
+async function getUSEtfData(code, env, stockMeta = null) {
+  const [quoteData, infoData] = await Promise.all([
+    fmpFetch("/quote", { symbol: code }, env),
+    fmpFetch("/etf/info", { symbol: code }, env),
+  ]);
+
+  const quote = Array.isArray(quoteData) ? quoteData[0] ?? {} : quoteData ?? {};
+  const info = Array.isArray(infoData) ? infoData[0] ?? {} : infoData ?? {};
+  const latestPrice = toNumber(quote.price);
+  const category = info.category || info.assetClass || "ETF";
+  const provider = info.issuer || info.provider || info.fundFamily || null;
+  const expenseRatio = toNumber(info.expenseRatio);
+
+  return {
+    stock: {
+      code,
+      name: info.name || stockMeta?.name || code,
+      market: "US",
+      marketLabel: "미국 주식",
+      industry: category,
+      assetType: "ETF",
+      description: `${category}${provider ? ` · ${provider}` : ""}${latestPrice != null ? ` · 최신 가격 $${latestPrice.toFixed(2)}` : ""}`,
+      metrics: emptyMetrics(),
+      metricDefinitions,
+    },
+    history: [],
+    summaryNote:
+      "ETF는 개별 기업 재무제표 기반 7개 지표를 그대로 적용하기 어렵습니다. 이 화면에서는 ETF임을 표시하고, 백테스팅 탭에서 가격 기반 전략 검증에 집중하는 편이 적절합니다.",
+    notes: [
+      "ETF는 운영 구조가 기업과 달라 PER·PBR·ROE 같은 개별 기업용 재무지표가 비어 있을 수 있습니다.",
+      expenseRatio != null
+        ? `FMP ETF 정보 기준 총보수(Expense Ratio)는 ${expenseRatio}% 입니다.`
+        : "총보수, 자산규모, 추종지수 같은 ETF 전용 지표를 별도 탭으로 분리하는 것이 더 적합합니다.",
+      "SOXL 같은 레버리지 ETF는 장기 보유 시 복리 효과와 변동성 드래그 때문에 기초지수를 단순 배수로 따라가지 않습니다.",
+    ],
+    sources: [
+      { label: "FMP ETF Symbol Search API", url: "https://site.financialmodelingprep.com/developer/docs/etf-list-api" },
+      { label: "FMP ETF & Mutual Fund Information API", url: "https://site.financialmodelingprep.com/developer/docs/stable/information" },
+      { label: "FMP Developer Docs", url: "https://site.financialmodelingprep.com/developer/docs/" },
+    ],
+  };
+}
+
 export async function getUSStockData(code, env) {
   const tickers = await loadUSTickers(env);
   const stockMeta = tickers.find((item) => item.code === code);
-  if (!stockMeta) {
-    throw new Error("해당 미국 종목을 찾지 못했습니다.");
-  }
+  const fallbackMeta = stockMeta || { code, name: code, exchange: "ETF" };
+  const selectedMeta = stockMeta || fallbackMeta;
 
   const today = new Date();
   const from = new Date(today);
@@ -280,7 +334,7 @@ export async function getUSStockData(code, env) {
 
   const quarterlyReports = incomeReports.filter((report) => balanceByDate.has(report.date)).slice(0, 4);
   if (!quarterlyReports.length) {
-    throw new Error("최근 분기 기준으로 조회 가능한 미국 재무 데이터가 없습니다.");
+    return getUSEtfData(code, env, fallbackMeta);
   }
 
   const history = quarterlyReports
@@ -307,12 +361,13 @@ export async function getUSStockData(code, env) {
 
   return {
     stock: {
-      code: stockMeta.code,
-      name: stockMeta.name,
+      code: selectedMeta.code,
+      name: selectedMeta.name,
       market: "US",
       marketLabel: "미국 주식",
-      industry: profile.industry || stockMeta.exchange,
-      description: `${stockMeta.exchange} 상장 · 최신 가격 ${latestPrice != null ? `$${latestPrice.toFixed(2)}` : "조회 불가"}`,
+      industry: profile.industry || selectedMeta.exchange,
+      assetType: "Stock",
+      description: `${selectedMeta.exchange} 상장 · 최신 가격 ${latestPrice != null ? `$${latestPrice.toFixed(2)}` : "조회 불가"}`,
       metrics: latestMetrics,
       metricDefinitions,
     },
