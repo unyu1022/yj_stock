@@ -1,6 +1,7 @@
 import { json, serverError, badRequest } from "../_lib/http.js";
 
 const ONE_DAY = 24 * 60 * 60 * 1000;
+const FMP_BASE_URL = "https://financialmodelingprep.com/stable";
 const cache = {
   KR: { fetchedAt: 0, items: null },
   US: { fetchedAt: 0, items: null },
@@ -67,26 +68,66 @@ async function loadKRCorpMaster(env) {
 async function loadUSMaster(env) {
   if (isFresh(cache.US)) return cache.US.items;
 
-  const response = await fetch("https://www.sec.gov/files/company_tickers_exchange.json", {
-    headers: {
-      "user-agent": `Stock Insight PWA ${env.SEC_CONTACT_EMAIL || "admin@example.com"}`,
-      "accept-encoding": "gzip, deflate",
-    },
-  });
+  const headers = {
+    "user-agent": `Stock Insight PWA ${env.SEC_CONTACT_EMAIL || "admin@example.com"}`,
+    "accept-encoding": "gzip, deflate",
+  };
+  const response = await fetch("https://www.sec.gov/files/company_tickers_exchange.json", { headers });
 
   if (!response.ok) {
     throw new Error(`SEC 종목 마스터 조회 실패: HTTP ${response.status}`);
   }
 
   const data = await response.json();
-  const items = (data.data ?? [])
+  const stockItems = (data.data ?? [])
     .map((row) => ({
       code: row[2],
       name: row[1],
       exchange: row[3],
+      assetType: "Stock",
     }))
     .filter((item) => item.code && item.exchange)
     .sort((a, b) => a.code.localeCompare(b.code));
+
+  let etfItems = [];
+  if (env.FMP_API_KEY) {
+    const query = new URLSearchParams({ apikey: env.FMP_API_KEY });
+    const etfResponse = await fetch(`${FMP_BASE_URL}/etf-list?${query.toString()}`, {
+      headers: {
+        "user-agent": `Stock Insight PWA ${env.SEC_CONTACT_EMAIL || "admin@example.com"}`,
+        accept: "application/json, text/plain, */*",
+      },
+    });
+
+    if (etfResponse.ok) {
+      const etfData = await etfResponse.json();
+      etfItems = (Array.isArray(etfData) ? etfData : [])
+        .map((row) => ({
+          code: row.symbol,
+          name: row.name,
+          exchange: row.exchange,
+          assetType: "ETF",
+        }))
+        .filter((item) => item.code && item.name);
+    }
+  }
+
+  const deduped = new Map();
+  [...stockItems, ...etfItems].forEach((item) => {
+    const key = String(item.code || "").toUpperCase();
+    if (!key) return;
+    if (!deduped.has(key)) {
+      deduped.set(key, { ...item, code: key });
+      return;
+    }
+
+    const current = deduped.get(key);
+    if ((current.assetType !== "ETF" && item.assetType === "ETF") || (!current.exchange && item.exchange)) {
+      deduped.set(key, { ...current, ...item, code: key });
+    }
+  });
+
+  const items = [...deduped.values()].sort((a, b) => a.code.localeCompare(b.code));
 
   cache.US = { fetchedAt: Date.now(), items };
   return items;
