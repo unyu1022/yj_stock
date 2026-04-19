@@ -1,5 +1,6 @@
 import { badRequest, json, serverError } from "../_lib/http.js";
 import { getKRStockData } from "../_lib/kr.js";
+import { getUSEtfData } from "../_lib/us-etf.js";
 import { getUSStockData } from "../_lib/us.js";
 
 export async function onRequestGet(context) {
@@ -9,6 +10,7 @@ export async function onRequestGet(context) {
     const code = (url.searchParams.get("code") || "").trim().toUpperCase();
     const corpCode = (url.searchParams.get("corpCode") || "").trim();
     const name = (url.searchParams.get("name") || "").trim();
+    const assetType = (url.searchParams.get("assetType") || "").trim().toUpperCase();
 
     if (!market || !["KR", "US"].includes(market)) {
       return badRequest("market 파라미터는 KR 또는 US 여야 합니다.");
@@ -21,7 +23,9 @@ export async function onRequestGet(context) {
     const payload =
       market === "KR"
         ? await getKRStockData(code, context.env, corpCode, name)
-        : await getUSStockData(code, context.env, name);
+        : assetType === "ETF"
+          ? await getUSEtfData(code, context.env, name)
+          : await getUSStockData(code, context.env, name);
 
     return json({ ok: true, ...payload });
   } catch (error) {
