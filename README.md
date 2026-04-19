@@ -76,3 +76,5 @@ Set-Location "C:\Users\kanzi\OneDrive\Desktop\stock"
 ```text
 https://your-worker-subdomain.workers.dev/api/health
 ```
+
+최근에는 Cloudflare 대시보드에서 환경변수 수정 후 재배포 검증을 위해 커밋 기반 재빌드를 함께 사용하고 있습니다.
