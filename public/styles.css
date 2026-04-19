@@ -316,6 +316,83 @@ body {
   gap: 12px;
 }
 
+.duration-grid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.primary-action {
+  border: 0;
+  border-radius: 16px;
+  padding: 14px 16px;
+  background: var(--brand);
+  color: #fffaf2;
+  font-size: 0.98rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.primary-action:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.chart-card {
+  padding: 16px;
+  border-radius: 18px;
+  background: var(--panel-strong);
+  border: 1px solid var(--line);
+}
+
+.chart-wrap {
+  display: grid;
+  gap: 12px;
+}
+
+.chart-meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.chart-svg {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+
+.chart-legend {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.legend-swatch {
+  width: 14px;
+  height: 14px;
+  border-radius: 999px;
+}
+
+.legend-swatch.stock {
+  background: var(--brand);
+}
+
+.legend-swatch.benchmark {
+  background: var(--accent);
+}
+
 .bottom-nav {
   position: fixed;
   left: 0;
@@ -360,6 +437,10 @@ code {
 @media (max-width: 820px) {
   .metric-grid,
   .quarterly-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .duration-grid {
     grid-template-columns: 1fr;
   }
 
