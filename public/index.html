@@ -94,39 +94,44 @@
               </article>
               <article class="summary-card">
                 <p class="section-kicker">Rule Set</p>
-                <h3>기본 진입 조건</h3>
+                <h3>보유 기간 설정</h3>
                 <div class="backtest-fields">
-                  <label class="field-label" for="entry-rule">진입 기준</label>
-                  <select id="entry-rule" class="search-input">
-                    <option value="value-quality">가치 + 수익성</option>
-                    <option value="quality-trend">수익성 + 추세</option>
-                    <option value="dividend-defensive">배당 + 방어형</option>
-                  </select>
-
-                  <label class="field-label" for="holding-period">보유 기간</label>
-                  <select id="holding-period" class="search-input">
-                    <option value="63">3개월</option>
-                    <option value="126">6개월</option>
-                    <option value="252">12개월</option>
-                  </select>
-
-                  <label class="field-label" for="rebalance-cycle">리밸런싱</label>
-                  <select id="rebalance-cycle" class="search-input">
-                    <option value="quarterly">분기별</option>
-                    <option value="monthly">월별</option>
-                    <option value="semiannual">반기별</option>
-                  </select>
+                  <div class="duration-grid">
+                    <div>
+                      <label class="field-label" for="holding-years">보유 연수</label>
+                      <input id="holding-years" class="search-input" type="number" min="0" max="20" value="1" />
+                    </div>
+                    <div>
+                      <label class="field-label" for="holding-months">추가 개월</label>
+                      <input id="holding-months" class="search-input" type="number" min="0" max="11" value="0" />
+                    </div>
+                  </div>
+                  <button id="run-backtest" class="primary-action" type="button">백테스트 실행</button>
                 </div>
               </article>
               <article class="summary-card">
                 <p class="section-kicker">Status</p>
                 <h3>다음 단계</h3>
                 <p>
-                  이 탭은 백테스팅 엔진을 붙이기 위한 준비 화면입니다. 현재는 선택 종목과
-                  전략 조건을 정리하는 단계이며, 다음 구현에서는 기간별 수익률과 매수·매도 규칙을 실제로 계산할 수 있게 연결할 예정입니다.
+                  현재는 같은 기간의 NASDAQ Composite와 비교하는 buy-and-hold 백테스트를 제공합니다.
+                  진입 기준과 리밸런싱 규칙은 다음 단계에서 별도 설정형으로 확장할 예정입니다.
                 </p>
               </article>
             </div>
+          </section>
+
+          <section class="panel backtest-results">
+            <div class="section-heading">
+              <p class="section-kicker">Result</p>
+              <h2>백테스팅 결과</h2>
+            </div>
+            <div id="backtestSummary" class="compare-summary empty-state">
+              종목을 선택하고 보유 기간을 입력한 뒤 백테스트를 실행하면 결과가 표시됩니다.
+            </div>
+            <div id="backtestChart" class="chart-card empty-state">
+              종목과 NASDAQ 비교 차트가 여기에 생성됩니다.
+            </div>
+            <ul id="backtestNotes" class="notes-list"></ul>
           </section>
         </section>
       </main>
