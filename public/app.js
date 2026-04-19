@@ -263,7 +263,7 @@ function renderSearchResults(items, query) {
   ui.searchResults.innerHTML = items
     .map(
       (stock) => `
-        <button class="search-result" type="button" data-code="${stock.code}">
+        <button class="search-result" type="button" data-code="${stock.code}" data-corp="${stock.corpCode ?? ""}" data-name="${encodeURIComponent(stock.name)}">
           <strong>${stock.name} (${stock.code})</strong>
           <small>${stock.marketLabel} · ${stock.exchange ?? stock.industry ?? "시장 정보"}</small>
         </button>
@@ -295,10 +295,17 @@ function renderIdleSearchState() {
   `;
 }
 
-async function loadStock(code) {
+async function loadStock(code, corpCode = "", name = "") {
   setLoading("실데이터를 조회하고 있습니다...");
   try {
-    const data = await fetchJson(`/api/stock?market=${state.market}&code=${encodeURIComponent(code)}`);
+    const params = new URLSearchParams({
+      market: state.market,
+      code,
+    });
+    if (corpCode) params.set("corpCode", corpCode);
+    if (name) params.set("name", name);
+
+    const data = await fetchJson(`/api/stock?${params.toString()}`);
     state.selectedStock = data.stock;
     state.stockData = data;
     renderSelection(data.stock);
@@ -355,7 +362,7 @@ function attachEvents() {
   document.body.addEventListener("click", (event) => {
     const button = event.target.closest(".search-result[data-code]");
     if (!button) return;
-    loadStock(button.dataset.code);
+    loadStock(button.dataset.code, button.dataset.corp || "", decodeURIComponent(button.dataset.name || ""));
   });
 }
 
