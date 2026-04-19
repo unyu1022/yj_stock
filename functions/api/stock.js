@@ -7,6 +7,8 @@ export async function onRequestGet(context) {
     const url = new URL(context.request.url);
     const market = (url.searchParams.get("market") || "").toUpperCase();
     const code = (url.searchParams.get("code") || "").trim().toUpperCase();
+    const corpCode = (url.searchParams.get("corpCode") || "").trim();
+    const name = (url.searchParams.get("name") || "").trim();
 
     if (!market || !["KR", "US"].includes(market)) {
       return badRequest("market 파라미터는 KR 또는 US 여야 합니다.");
@@ -16,7 +18,11 @@ export async function onRequestGet(context) {
       return badRequest("code 파라미터가 필요합니다.");
     }
 
-    const payload = market === "KR" ? await getKRStockData(code, context.env) : await getUSStockData(code, context.env);
+    const payload =
+      market === "KR"
+        ? await getKRStockData(code, context.env, corpCode, name)
+        : await getUSStockData(code, context.env);
+
     return json({ ok: true, ...payload });
   } catch (error) {
     return serverError(error.message);
