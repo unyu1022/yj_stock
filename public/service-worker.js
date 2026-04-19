@@ -1,4 +1,4 @@
-const CACHE_NAME = "stock-insight-v12";
+const CACHE_NAME = "stock-insight-v13";
 const ASSETS = [
   "./",
   "./index.html",
@@ -9,6 +9,7 @@ const ASSETS = [
 ];
 
 self.addEventListener("install", (event) => {
+  self.skipWaiting();
   event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.addAll(ASSETS)));
 });
 
@@ -18,6 +19,7 @@ self.addEventListener("activate", (event) => {
       Promise.all(keys.filter((key) => key !== CACHE_NAME).map((key) => caches.delete(key))),
     ),
   );
+  self.clients.claim();
 });
 
 self.addEventListener("fetch", (event) => {
@@ -26,10 +28,36 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
+  if (event.request.mode === "navigate") {
+    event.respondWith(
+      fetch(event.request)
+        .then((response) => {
+          const copy = response.clone();
+          event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.put("./index.html", copy)));
+          return response;
+        })
+        .catch(async () => {
+          const cached = await caches.match("./index.html");
+          if (cached) return cached;
+          return Response.error();
+        }),
+    );
+    return;
+  }
+
   event.respondWith(
     caches.match(event.request).then((cached) => {
-      if (cached) return cached;
-      return fetch(event.request).catch(() => caches.match("./index.html"));
+      const networkFetch = fetch(event.request)
+        .then((response) => {
+          if (response.ok) {
+            const copy = response.clone();
+            event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.put(event.request, copy)));
+          }
+          return response;
+        })
+        .catch(() => cached);
+
+      return cached || networkFetch;
     }),
   );
 });
