@@ -27,7 +27,18 @@ async function loadUSTickers(env) {
     if (!response.ok) {
       throw new Error(`SEC 종목 목록 조회 실패: HTTP ${response.status}`);
     }
-    const data = await response.json();
+    const text = await response.text();
+    if (!text) {
+      throw new Error("SEC 종목 목록 응답 본문이 비어 있습니다.");
+    }
+
+    let data;
+    try {
+      data = JSON.parse(text);
+    } catch (error) {
+      throw new Error("SEC 종목 목록 JSON 파싱에 실패했습니다.");
+    }
+
     return (data.data ?? [])
       .map((row) => ({
         code: row[2],
@@ -72,10 +83,22 @@ async function alphaFetch(params, env) {
   return remember(cacheKey, HALF_DAY, async () => {
     const query = new URLSearchParams({ ...params, apikey: key });
     const response = await fetch(`${ALPHA_VANTAGE_URL}?${query.toString()}`);
-    const data = await response.json();
+    const text = await response.text();
     if (!response.ok) {
       throw new Error(`Alpha Vantage 조회 실패: HTTP ${response.status}`);
     }
+
+    if (!text) {
+      throw new Error(`Alpha Vantage 응답 본문이 비어 있습니다. function=${params.function}`);
+    }
+
+    let data;
+    try {
+      data = JSON.parse(text);
+    } catch (error) {
+      throw new Error(`Alpha Vantage JSON 파싱 실패: function=${params.function}`);
+    }
+
     if (data.Note) {
       throw new Error("Alpha Vantage 무료 호출 제한에 걸렸습니다. 잠시 후 다시 시도하거나, 같은 종목은 잠시 뒤 재조회해 주세요.");
     }
