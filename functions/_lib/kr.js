@@ -16,6 +16,15 @@ function getTagValue(block, tagName) {
   return match ? match[1].trim() : "";
 }
 
+function dartHeaders(env) {
+  const contact = env.SEC_CONTACT_EMAIL || "admin@example.com";
+  return {
+    "user-agent": `Stock Insight PWA / ${contact}`,
+    accept: "application/json, text/xml, application/xml;q=0.9, */*;q=0.8",
+    "accept-language": "ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7",
+  };
+}
+
 async function unzipXml(buffer) {
   const view = new DataView(buffer);
   if (view.getUint32(0, true) !== 0x04034b50) {
@@ -73,7 +82,7 @@ async function loadCorpList(env) {
           page_count: "100",
         });
 
-        const data = await fetchJson(`${OPEN_DART_BASE}/list.json?${params.toString()}`);
+        const data = await fetchJson(`${OPEN_DART_BASE}/list.json?${params.toString()}`, env);
         totalPages = Math.min(Number(data.total_page || 1), 200);
 
         for (const item of data.list ?? []) {
@@ -140,8 +149,15 @@ function candidateReports() {
   return years;
 }
 
-async function fetchJson(url) {
-  const response = await fetch(url);
+async function fetchJson(url, env) {
+  const response = await fetch(url, {
+    headers: dartHeaders(env),
+    redirect: "manual",
+  });
+  if (response.status >= 300 && response.status < 400) {
+    const location = response.headers.get("location") || "unknown";
+    throw new Error(`OpenDART 요청이 리다이렉트되었습니다. location=${location}`);
+  }
   const data = await response.json();
   if (!response.ok) {
     throw new Error(`OpenDART 조회 실패: HTTP ${response.status}`);
@@ -224,6 +240,7 @@ async function fetchKrIndicators(corpCode, bsnsYear, reprtCode, env) {
     categories.map((category) =>
       fetchJson(
         `${OPEN_DART_BASE}/fnlttSinglIndx.json?crtfc_key=${key}&corp_code=${corpCode}&bsns_year=${bsnsYear}&reprt_code=${reprtCode}&idx_cl_code=${category}`,
+        env,
       ),
     ),
   );
@@ -234,11 +251,13 @@ async function fetchKrStatements(corpCode, bsnsYear, reprtCode, env) {
   const key = ensureKey(env);
   const data = await fetchJson(
     `${OPEN_DART_BASE}/fnlttSinglAcntAll.json?crtfc_key=${key}&corp_code=${corpCode}&bsns_year=${bsnsYear}&reprt_code=${reprtCode}&fs_div=CFS`,
+    env,
   );
   if ((data.list ?? []).length) return data.list;
 
   const fallback = await fetchJson(
     `${OPEN_DART_BASE}/fnlttSinglAcntAll.json?crtfc_key=${key}&corp_code=${corpCode}&bsns_year=${bsnsYear}&reprt_code=${reprtCode}&fs_div=OFS`,
+    env,
   );
   return fallback.list ?? [];
 }
