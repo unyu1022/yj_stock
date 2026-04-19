@@ -94,8 +94,15 @@
               </article>
               <article class="summary-card">
                 <p class="section-kicker">Rule Set</p>
-                <h3>보유 기간 설정</h3>
+                <h3>전략과 보유 기간 설정</h3>
                 <div class="backtest-fields">
+                  <div>
+                    <label class="field-label" for="strategy-select">전략 선택</label>
+                    <select id="strategy-select" class="search-input">
+                      <option value="trend">추세 전환</option>
+                      <option value="vix">공포지수</option>
+                    </select>
+                  </div>
                   <div class="duration-grid">
                     <div>
                       <label class="field-label" for="holding-years">보유 연수</label>
@@ -113,8 +120,8 @@
                 <p class="section-kicker">Status</p>
                 <h3>다음 단계</h3>
                 <p>
-                  현재는 같은 기간의 NASDAQ Composite와 비교하는 buy-and-hold 백테스트를 제공합니다.
-                  진입 기준과 리밸런싱 규칙은 다음 단계에서 별도 설정형으로 확장할 예정입니다.
+                  현재는 추세 전환과 공포지수 기반의 두 가지 전략을 제공합니다.
+                  세부 임계값과 리밸런싱 규칙은 다음 단계에서 사용자 지정형으로 확장할 예정입니다.
                 </p>
               </article>
             </div>
