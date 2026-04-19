@@ -21,7 +21,7 @@ export async function onRequestGet(context) {
     const payload =
       market === "KR"
         ? await getKRStockData(code, context.env, corpCode, name)
-        : await getUSStockData(code, context.env);
+        : await getUSStockData(code, context.env, name);
 
     return json({ ok: true, ...payload });
   } catch (error) {
