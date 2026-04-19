@@ -4,7 +4,7 @@ import { metricDefinitions, percent, round, toNumber } from "./metrics.js";
 const ONE_DAY = 24 * 60 * 60 * 1000;
 const HALF_DAY = 12 * 60 * 60 * 1000;
 const SEC_TICKERS_URL = "https://www.sec.gov/files/company_tickers_exchange.json";
-const FMP_BASE_URL = "https://financialmodelingprep.com/api/v3";
+const FMP_BASE_URL = "https://financialmodelingprep.com/stable";
 
 function secHeaders(env) {
   const contact = env.SEC_CONTACT_EMAIL || "admin@example.com";
@@ -96,6 +96,9 @@ async function fmpFetch(path, params, env, ttl = HALF_DAY) {
     const text = await response.text();
 
     if (!response.ok) {
+      if (response.status === 403) {
+        throw new Error("FMP 조회 실패: HTTP 403 (API 키가 잘못되었거나 현재 플랜에서 이 요청이 허용되지 않습니다.)");
+      }
       throw new Error(`FMP 조회 실패: HTTP ${response.status}`);
     }
     if (!text) {
@@ -246,20 +249,21 @@ export async function getUSStockData(code, env) {
   from.setUTCFullYear(from.getUTCFullYear() - 2);
 
   const [profileData, quoteData, incomeData, balanceData, priceData, dividendData] = await Promise.all([
-    fmpFetch(`/profile/${code}`, {}, env),
-    fmpFetch(`/quote/${code}`, {}, env),
-    fmpFetch(`/income-statement/${code}`, { period: "quarter", limit: "4" }, env),
-    fmpFetch(`/balance-sheet-statement/${code}`, { period: "quarter", limit: "4" }, env),
+    fmpFetch("/profile", { symbol: code }, env),
+    fmpFetch("/quote", { symbol: code }, env),
+    fmpFetch("/income-statement", { symbol: code, period: "quarter", limit: "4" }, env),
+    fmpFetch("/balance-sheet-statement", { symbol: code, period: "quarter", limit: "4" }, env),
     fmpFetch(
-      `/historical-price-full/${code}`,
+      "/historical-price-eod/full",
       {
+        symbol: code,
         serietype: "line",
         from: from.toISOString().slice(0, 10),
         to: today.toISOString().slice(0, 10),
       },
       env,
     ),
-    fmpFetch(`/historical-price-full/stock_dividend/${code}`, { limit: "120" }, env),
+    fmpFetch("/dividends", { symbol: code }, env),
   ]);
 
   const profile = Array.isArray(profileData) ? profileData[0] ?? {} : profileData ?? {};
@@ -267,8 +271,12 @@ export async function getUSStockData(code, env) {
   const incomeReports = sortDescendingByDate(Array.isArray(incomeData) ? incomeData : []);
   const balanceReports = sortDescendingByDate(Array.isArray(balanceData) ? balanceData : []);
   const balanceByDate = new Map(balanceReports.map((row) => [row.date, row]));
-  const priceHistory = sortDescendingByDate(Array.isArray(priceData?.historical) ? priceData.historical : []);
-  const dividendHistory = sortDescendingByDate(Array.isArray(dividendData?.historical) ? dividendData.historical : []);
+  const priceHistory = sortDescendingByDate(
+    Array.isArray(priceData) ? priceData : Array.isArray(priceData?.historical) ? priceData.historical : [],
+  );
+  const dividendHistory = sortDescendingByDate(
+    Array.isArray(dividendData) ? dividendData : Array.isArray(dividendData?.historical) ? dividendData.historical : [],
+  );
 
   const quarterlyReports = incomeReports.filter((report) => balanceByDate.has(report.date)).slice(0, 4);
   if (!quarterlyReports.length) {
