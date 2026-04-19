@@ -435,7 +435,7 @@ function renderSearchResults(items, query) {
           data-name="${encodeURIComponent(stock.name)}"
         >
           <strong>${stock.name} (${stock.code})</strong>
-          <small>미국 주식 · ${stock.exchange ?? "종목 선택"}</small>
+          <small>미국 ${stock.assetType === "ETF" ? "ETF" : "주식"} · ${stock.exchange ?? "종목 선택"}</small>
         </button>
       `,
     )
@@ -588,7 +588,7 @@ function registerServiceWorker() {
 
 async function boot() {
   renderNotes([
-    "미국 주식 검색은 SEC 종목 마스터를 기반으로 즉시 필터링합니다.",
+    "미국 종목 검색은 SEC 종목 마스터와 FMP ETF 목록을 합쳐 즉시 필터링합니다.",
     "재무제표 탭은 FMP 분기 재무와 가격 데이터를 기준으로 핵심 지표를 계산합니다.",
     "백테스팅 탭은 추세 전환과 공포지수 전략을 NASDAQ Composite와 비교합니다.",
   ]);
