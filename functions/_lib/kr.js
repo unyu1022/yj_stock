@@ -68,10 +68,21 @@ async function fetchJson(url, env) {
     throw new Error(`OpenDART 요청이 리다이렉트되었습니다. location=${location}`);
   }
 
-  const data = await response.json();
+  const text = await response.text();
   if (!response.ok) {
     throw new Error(`OpenDART 조회 실패: HTTP ${response.status}`);
   }
+  if (!text) {
+    throw new Error(`OpenDART 응답 본문이 비어 있습니다. url=${url}`);
+  }
+
+  let data;
+  try {
+    data = JSON.parse(text);
+  } catch (error) {
+    throw new Error(`OpenDART JSON 파싱 실패: url=${url}`);
+  }
+
   if (data.status !== "000" && data.status !== "013") {
     throw new Error(`OpenDART 오류 ${data.status}: ${data.message}`);
   }
@@ -92,7 +103,16 @@ async function fetchNaverJson(url) {
     throw new Error(`Naver Finance 조회 실패: HTTP ${response.status}`);
   }
 
-  return response.json();
+  const text = await response.text();
+  if (!text) {
+    throw new Error(`Naver Finance 응답 본문이 비어 있습니다. url=${url}`);
+  }
+
+  try {
+    return JSON.parse(text);
+  } catch (error) {
+    throw new Error(`Naver Finance JSON 파싱 실패: url=${url}`);
+  }
 }
 
 function parseLooseNumber(value) {
