@@ -23,7 +23,7 @@ function fmpHeaders(env) {
 
 function ensureFmpKey(env) {
   if (!env.FMP_API_KEY) {
-    throw new Error("誘멸뎅 二쇱떇 議고쉶?먮뒗 FMP_API_KEY ?섍꼍蹂?섍? ?꾩슂?⑸땲??");
+    throw new Error("미국 주식 조회에는 FMP_API_KEY 환경변수가 필요합니다.");
   }
   return env.FMP_API_KEY;
 }
@@ -55,7 +55,7 @@ function mapSearchRow(row) {
     code: symbol,
     name,
     market: "US",
-    marketLabel: "誘멸뎅 二쇱떇",
+    marketLabel: "미국 주식",
     exchange,
     assetType,
   };
@@ -83,19 +83,19 @@ async function loadUSTickers(env) {
   return remember("us-tickers", ONE_DAY, async () => {
     const response = await fetch(SEC_TICKERS_URL, { headers: secHeaders(env) });
     if (!response.ok) {
-      throw new Error(`SEC 醫낅ぉ 紐⑸줉 議고쉶 ?ㅽ뙣: HTTP ${response.status}`);
+      throw new Error(`SEC 종목 목록 조회 실패: HTTP ${response.status}`);
     }
 
     const text = await response.text();
     if (!text) {
-      throw new Error("SEC 醫낅ぉ 紐⑸줉 ?묐떟 蹂몃Ц??鍮꾩뼱 ?덉뒿?덈떎.");
+      throw new Error("SEC 종목 목록 응답 본문이 비어 있습니다.");
     }
 
     let data;
     try {
       data = JSON.parse(text);
     } catch (error) {
-      throw new Error("SEC 醫낅ぉ 紐⑸줉 JSON ?뚯떛???ㅽ뙣?덉뒿?덈떎.");
+      throw new Error("SEC 종목 목록 JSON 파싱에 실패했습니다.");
     }
 
     return (data.data ?? [])
@@ -105,7 +105,7 @@ async function loadUSTickers(env) {
         exchange: row[3],
         cik: String(row[0]).padStart(10, "0"),
         market: "US",
-        marketLabel: "誘멸뎅 二쇱떇",
+        marketLabel: "미국 주식",
       }))
       .filter((item) => item.code && item.exchange)
       .sort((a, b) => a.code.localeCompare(b.code));
@@ -163,26 +163,26 @@ async function fmpFetch(path, params, env, ttl = HALF_DAY) {
 
     if (!response.ok) {
       if (response.status === 403) {
-        throw new Error("FMP 議고쉶 ?ㅽ뙣: HTTP 403 (API ?ㅺ? ?섎せ?섏뿀嫄곕굹 ?꾩옱 ?뚮옖?먯꽌 ???붿껌???덉슜?섏? ?딆뒿?덈떎.)");
+        throw new Error("FMP 조회 실패: HTTP 403 (API 키가 잘못되었거나 현재 플랜에서 이 요청이 허용되지 않습니다.)");
       }
-      throw new Error(`FMP 議고쉶 ?ㅽ뙣: HTTP ${response.status}`);
+      throw new Error(`FMP 조회 실패: HTTP ${response.status}`);
     }
     if (!text) {
-      throw new Error(`FMP ?묐떟 蹂몃Ц??鍮꾩뼱 ?덉뒿?덈떎. path=${path}`);
+      throw new Error(`FMP 응답 본문이 비어 있습니다. path=${path}`);
     }
 
     let data;
     try {
       data = JSON.parse(text);
     } catch (error) {
-      throw new Error(`FMP JSON ?뚯떛 ?ㅽ뙣: path=${path}`);
+      throw new Error(`FMP JSON 파싱 실패: path=${path}`);
     }
 
     if (data?.["Error Message"]) {
       throw new Error(data["Error Message"]);
     }
     if (data?.error) {
-      throw new Error(typeof data.error === "string" ? data.error : data.error.message || `FMP ?ㅻ쪟: ${path}`);
+      throw new Error(typeof data.error === "string" ? data.error : data.error.message || `FMP 오류: ${path}`);
     }
     if (data?.Error) {
       throw new Error(data.Error);
@@ -191,7 +191,7 @@ async function fmpFetch(path, params, env, ttl = HALF_DAY) {
       return data;
     }
     if (data == null) {
-      throw new Error(`FMP ?묐떟 ?곗씠?곌? 鍮꾩뼱 ?덉뒿?덈떎. path=${path}`);
+      throw new Error(`FMP 응답 데이터가 비어 있습니다. path=${path}`);
     }
 
     return data;
@@ -284,7 +284,7 @@ function buildQuarterSnapshot(incomeReport, balanceReport, priceHistory, dividen
 
   return {
     label: parseQuarterDateLabel(date),
-    headline: "遺꾧린 ?ㅼ쟻 諛섏쁺",
+    headline: "분기 실적 반영",
     periodEnd: date,
     metrics: {
       per: round(metrics.per),
@@ -300,7 +300,7 @@ function buildQuarterSnapshot(incomeReport, balanceReport, priceHistory, dividen
 
 function summarizeUS(history) {
   const latest = history[history.length - 1];
-  return `${latest.label} 湲곗? 遺꾧린 ?щТ? 理쒓렐 媛寃??먮쫫??議고빀??怨꾩궛?덉뒿?덈떎. 誘멸뎅 醫낅ぉ? SEC 醫낅ぉ 紐⑸줉怨?FMP ?щТ/媛寃??곗씠?곕? ?④퍡 ?ъ슜?⑸땲??`;
+  return `${latest.label} 기준 분기 재무와 최근 가격 흐름을 조합해 계산했습니다. 미국 종목은 SEC 종목 목록과 FMP 재무/가격 데이터를 함께 사용합니다.`;
 }
 
 async function getUSEtfData(code, env, stockMeta = null) {
@@ -322,20 +322,20 @@ async function getUSEtfData(code, env, stockMeta = null) {
       code,
       name: stockMeta?.name || profile.companyName || code,
       market: "US",
-      marketLabel: "誘멸뎅 二쇱떇",
+      marketLabel: "미국 주식",
       industry: category,
       assetType: "ETF",
-      description: `${category}${provider ? ` 쨌 ${provider}` : ""}${latestPrice != null ? ` 쨌 理쒖떊 媛寃?$${latestPrice.toFixed(2)}` : ""}`,
+      description: `${category}${provider ? ` · ${provider}` : ""}${latestPrice != null ? ` · 최신 가격 $${latestPrice.toFixed(2)}` : ""}`,
       metrics: emptyMetrics(),
       metricDefinitions,
     },
     history: [],
     summaryNote:
-      "ETF??媛쒕퀎 湲곗뾽 ?щТ?쒗몴 湲곕컲 7媛?吏?쒕? 洹몃?濡??곸슜?섍린 ?대졄?듬땲?? ???붾㈃?먯꽌??ETF?꾩쓣 ?쒖떆?섍퀬, 諛깊뀒?ㅽ똿 ??뿉??媛寃?湲곕컲 ?꾨왂 寃利앹뿉 吏묒쨷?섎뒗 ?몄씠 ?곸젅?⑸땲??",
+      "ETF는 개별 기업 재무제표 기반 7개 지표를 그대로 적용하기 어렵습니다. 이 화면에서는 ETF임을 표시하고, 백테스팅 탭에서 가격 기반 전략 검증에 집중하는 편이 적절합니다.",
     notes: [
-      "ETF???댁쁺 援ъ“媛 湲곗뾽怨??щ씪 PER쨌PBR쨌ROE 媛숈? 媛쒕퀎 湲곗뾽???щТ吏?쒓? 鍮꾩뼱 ?덉쓣 ???덉뒿?덈떎.",
-      "珥앸낫?? ?먯궛洹쒕е, 異붿쥌吏??媛숈? ETF ?꾩슜 吏?쒕? 蹂꾨룄 ??쑝濡?遺꾨━?섎뒗 寃껋씠 ???곹빀?⑸땲??",
-      "SOXL 媛숈? ?덈쾭由ъ? ETF???κ린 蹂댁쑀 ??蹂듬━ ?④낵? 蹂?숈꽦 ?쒕옒洹??뚮Ц??湲곗큹吏?섎? ?⑥닚 諛곗닔濡??곕씪媛吏 ?딆뒿?덈떎.",
+      "ETF는 운영 구조가 기업과 달라 PER·PBR·ROE 같은 개별 기업용 재무지표가 비어 있을 수 있습니다.",
+      "총보수, 자산규모, 추종지수 같은 ETF 전용 지표를 별도 탭으로 분리하는 것이 더 적합합니다.",
+      "SOXL 같은 레버리지 ETF는 장기 보유 시 복리 효과와 변동성 드래그 때문에 기초지수를 단순 배수로 따라가지 않습니다.",
     ],
     sources: [
       { label: "FMP ETF Symbol Search API", url: "https://site.financialmodelingprep.com/developer/docs/etf-list-api" },
@@ -346,17 +346,17 @@ async function getUSEtfData(code, env, stockMeta = null) {
   };
 }
 
-export async function getUSStockData(code, env) {
+export async function getUSStockData(code, env, selectedName = "") {
   const tickers = await loadUSTickers(env);
   const stockMeta = tickers.find((item) => item.code === code);
-  const fallbackMeta = stockMeta || { code, name: code, exchange: "ETF" };
+  const fallbackMeta = stockMeta || { code, name: selectedName || code, exchange: "ETF" };
   const selectedMeta = stockMeta || fallbackMeta;
 
   const today = new Date();
   const from = new Date(today);
   from.setUTCFullYear(from.getUTCFullYear() - 2);
 
-  const [profileData, quoteData, priceData] = await Promise.all([
+  const [profileResult, quoteResult, priceResult] = await Promise.allSettled([
     fmpFetch("/profile", { symbol: code }, env),
     fmpFetch("/quote", { symbol: code }, env),
     fmpFetch(
@@ -377,6 +377,9 @@ export async function getUSStockData(code, env) {
     fmpFetch("/dividends", { symbol: code }, env),
   ]);
 
+  const profileData = profileResult.status === "fulfilled" ? profileResult.value : [];
+  const quoteData = quoteResult.status === "fulfilled" ? quoteResult.value : [];
+  const priceData = priceResult.status === "fulfilled" ? priceResult.value : [];
   const profile = Array.isArray(profileData) ? profileData[0] ?? {} : profileData ?? {};
   const quote = Array.isArray(quoteData) ? quoteData[0] ?? {} : quoteData ?? {};
   const incomeData = incomeResult.status === "fulfilled" ? incomeResult.value : [];
@@ -395,6 +398,10 @@ export async function getUSStockData(code, env) {
   const quarterlyReports = incomeReports.filter((report) => balanceByDate.has(report.date)).slice(0, 4);
   if (!quarterlyReports.length) {
     return getUSEtfData(code, env, fallbackMeta);
+  }
+
+  if (!quoteData.length && !profileData.length && !priceHistory.length) {
+    throw new Error(`FMP 조회 실패: ${code} 종목의 가격/프로필 데이터를 불러오지 못했습니다.`);
   }
 
   const history = quarterlyReports
@@ -424,19 +431,19 @@ export async function getUSStockData(code, env) {
       code: selectedMeta.code,
       name: selectedMeta.name,
       market: "US",
-      marketLabel: "誘멸뎅 二쇱떇",
+      marketLabel: "미국 주식",
       industry: profile.industry || selectedMeta.exchange,
       assetType: "Stock",
-      description: `${selectedMeta.exchange} ?곸옣 쨌 理쒖떊 媛寃?${latestPrice != null ? `$${latestPrice.toFixed(2)}` : "議고쉶 遺덇?"}`,
+      description: `${selectedMeta.exchange} 상장 · 최신 가격 ${latestPrice != null ? `$${latestPrice.toFixed(2)}` : "조회 불가"}`,
       metrics: latestMetrics,
       metricDefinitions,
     },
     history,
     summaryNote: summarizeUS(history),
     notes: [
-      "誘멸뎅 二쇱떇 寃?됱? SEC company_tickers_exchange.json???ъ슜?⑸땲??",
-      "誘멸뎅 二쇱떇 ?곸꽭 遺꾩꽍? Financial Modeling Prep(FMP)??遺꾧린 ?щТ?쒗몴? 媛寃??곗씠?곕? ?ъ슜?⑸땲??",
-      "PER쨌PBR쨌諛곕떦?섏씡瑜좎? 理쒖떊 媛寃⑷낵 理쒓렐 遺꾧린 ?щТ媛??먮뒗 理쒖떊 諛곕떦 ?곗씠?곕? 議고빀??怨꾩궛媛믪엯?덈떎.",
+      "미국 주식 검색은 SEC company_tickers_exchange.json을 사용합니다.",
+      "미국 주식 상세 분석은 Financial Modeling Prep(FMP)의 분기 재무제표와 가격 데이터를 사용합니다.",
+      "PER·PBR·배당수익률은 최신 가격과 최근 분기 재무값 또는 최신 배당 데이터를 조합한 계산값입니다.",
     ],
     sources: [
       { label: "SEC Company Tickers Exchange", url: "https://www.sec.gov/file/company-tickers-exchange" },
@@ -498,7 +505,7 @@ function buildBenchmarkLookup(series) {
 
 function calculatePerformance(startRow, endRow) {
   if (!startRow?.close || !endRow?.close) {
-    throw new Error("諛깊뀒?ㅽ듃 媛寃??곗씠?곌? 遺議깊빀?덈떎.");
+    throw new Error("백테스트 가격 데이터가 부족합니다.");
   }
 
   const totalReturn = ((endRow.close / startRow.close) - 1) * 100;
@@ -526,7 +533,7 @@ function buildBacktestChartSeries(stockSeries, benchmarkSeries, startDate, endDa
   const filteredBenchmark = benchmarkSeries.filter((row) => row.date >= startDate && row.date <= endDate && row.close != null);
 
   if (!filteredStock.length || !filteredBenchmark.length) {
-    throw new Error("諛깊뀒?ㅽ듃 李⑦듃瑜?留뚮뱾 媛寃??곗씠?곌? 遺議깊빀?덈떎.");
+    throw new Error("백테스트 차트를 만들 가격 데이터가 부족합니다.");
   }
 
   const stockStart = filteredStock[0].close;
@@ -534,7 +541,7 @@ function buildBacktestChartSeries(stockSeries, benchmarkSeries, startDate, endDa
   const benchmarkStartRow = findClosestPriceOnOrAfter(filteredBenchmark, startDate) || filteredBenchmark[0];
   const benchmarkStart = benchmarkStartRow?.close;
   if (!stockStart || !benchmarkStart) {
-    throw new Error("諛깊뀒?ㅽ듃 湲곗? 媛寃⑹쓣 怨꾩궛?섏? 紐삵뻽?듬땲??");
+    throw new Error("백테스트 기준 가격을 계산하지 못했습니다.");
   }
 
   return filteredStock
@@ -617,8 +624,8 @@ function simulateTrendStrategy(stockSeries, startDate, endDate) {
   }
 
   return {
-    label: "異붿꽭 ?꾪솚 (50??200???대룞?됯퇏)",
-    shortLabel: "異붿꽭 ?꾪솚",
+    label: "추세 전환 (50일/200일 이동평균)",
+    shortLabel: "추세 전환",
     points,
   };
 }
@@ -662,8 +669,8 @@ function simulateVixStrategy(stockSeries, vixSeries, startDate, endDate) {
   }
 
   return {
-    label: "怨듯룷吏??(VIX 30 ?댁긽 留ㅼ닔, 20 ?댄븯 留ㅻ룄)",
-    shortLabel: "怨듯룷吏??",
+    label: "공포지수 (VIX 30 이상 매수, 20 이하 매도)",
+    shortLabel: "공포지수",
     points,
   };
 }
@@ -671,7 +678,7 @@ function simulateVixStrategy(stockSeries, vixSeries, startDate, endDate) {
 function simulateNasdaqBenchmark(benchmarkSeries, startDate, endDate) {
   const filtered = benchmarkSeries.filter((row) => row.date >= startDate && row.date <= endDate && row.close != null);
   if (!filtered.length) {
-    throw new Error("NASDAQ 鍮꾧탳??媛寃??곗씠?곌? 遺議깊빀?덈떎.");
+    throw new Error("NASDAQ 비교용 가격 데이터가 부족합니다.");
   }
 
   const startValue = filtered[0].close;
@@ -734,16 +741,16 @@ export async function getUSBacktestData(code, env, years = 0, months = 0, strate
   const normalizedStrategy = String(strategy || "trend").toLowerCase();
 
   if (normalizedYears === 0 && normalizedMonths === 0) {
-    throw new Error("蹂댁쑀 湲곌컙? 理쒖냼 1媛쒖썡 ?댁긽?댁뼱???⑸땲??");
+    throw new Error("보유 기간은 최소 1개월 이상이어야 합니다.");
   }
   if (!["trend", "vix"].includes(normalizedStrategy)) {
-    throw new Error("strategy ?뚮씪誘명꽣??trend ?먮뒗 vix ?ъ빞 ?⑸땲??");
+    throw new Error("strategy 파라미터는 trend 또는 vix 여야 합니다.");
   }
 
   const tickers = await loadUSTickers(env);
   const stockMeta = tickers.find((item) => item.code === code);
   if (!stockMeta) {
-    throw new Error("?대떦 誘멸뎅 醫낅ぉ??李얠? 紐삵뻽?듬땲??");
+    throw new Error("해당 미국 종목을 찾지 못했습니다.");
   }
 
   const today = new Date();
@@ -770,7 +777,7 @@ export async function getUSBacktestData(code, env, years = 0, months = 0, strate
   const stockStart = findClosestPriceOnOrAfter(stockSeries, from);
   const stockEnd = findClosestPriceOnOrBefore(stockSeries, to);
   if (!stockStart || !stockEnd) {
-    throw new Error("諛깊뀒?ㅽ듃 湲곌컙???꾩슂??醫낅ぉ 媛寃??곗씠?곌? 遺議깊빀?덈떎.");
+    throw new Error("백테스트 기간에 필요한 종목 가격 데이터가 부족합니다.");
   }
 
   const strategyResult =
@@ -779,7 +786,7 @@ export async function getUSBacktestData(code, env, years = 0, months = 0, strate
       : simulateVixStrategy(stockSeries, vixSeries, stockStart.date, stockEnd.date);
 
   if (!strategyResult.points.length) {
-    throw new Error("?꾨왂 諛깊뀒?ㅽ듃瑜?怨꾩궛???곗씠?곌? 遺議깊빀?덈떎.");
+    throw new Error("전략 백테스트를 계산할 데이터가 부족합니다.");
   }
 
   const benchmarkResult = simulateNasdaqBenchmark(benchmarkSeries, strategyResult.points[0].date, strategyResult.points[strategyResult.points.length - 1].date);
@@ -815,10 +822,10 @@ export async function getUSBacktestData(code, env, years = 0, months = 0, strate
     chartSeries,
     notes: [
       normalizedStrategy === "trend"
-        ? "異붿꽭 ?꾪솚 ?꾨왂? ?꾩씪 湲곗? 50???대룞?됯퇏??200???대룞?됯퇏???곹뼢 ?뚰뙆?섎㈃ 留ㅼ닔 ?곹깭濡??꾪솚?섍퀬, 諛섎?濡??대젮媛硫??꾧툑 ?곹깭濡??꾪솚?⑸땲??"
-        : "怨듯룷吏???꾨왂? ?꾩씪 VIX媛 30 ?댁긽?대㈃ 留ㅼ닔 ?곹깭濡??꾪솚?섍퀬, 20 ?댄븯?대㈃ 留ㅻ룄 ?곹깭濡??꾪솚?섎뒗 ?⑥닚 由ъ뒪?????ㅽ봽 諛⑹떇?낅땲??",
-      "鍮꾧탳 湲곗?? 媛숈? 湲곌컙??NASDAQ Composite (^IXIC) ?⑥닚 蹂댁쑀 ?깃낵?낅땲??",
-      "?꾩쟻?섏씡瑜좎? ?쒖옉 ?쒖젏 ?鍮?珥앹닔?듬쪧?닿퀬 CAGR? ?대떦 湲곌컙???곕났由??섏씡瑜좎엯?덈떎.",
+        ? "추세 전환 전략은 전일 기준 50일 이동평균이 200일 이동평균을 상향 돌파하면 매수 상태로 전환하고, 반대로 내려가면 현금 상태로 전환합니다."
+        : "공포지수 전략은 전일 VIX가 30 이상이면 매수 상태로 전환하고, 20 이하이면 매도 상태로 전환하는 단순 리스크 온/오프 방식입니다.",
+      "비교 기준은 같은 기간의 NASDAQ Composite (^IXIC) 단순 보유 성과입니다.",
+      "누적수익률은 시작 시점 대비 총수익률이고 CAGR은 해당 기간의 연복리 수익률입니다.",
     ],
   };
 }
