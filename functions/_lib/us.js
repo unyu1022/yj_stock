@@ -40,6 +40,45 @@ function emptyMetrics() {
   };
 }
 
+function mapSearchRow(row) {
+  const symbol = String(row.symbol || row.code || "").trim().toUpperCase();
+  const name = String(row.name || "").trim();
+  const exchange = String(row.exchangeShortName || row.exchange || "").trim();
+  const rawType = String(row.type || row.instrumentType || row.assetType || "").toLowerCase();
+  const assetType =
+    rawType.includes("etf") || rawType.includes("fund") || name.toLowerCase().includes(" etf")
+      ? "ETF"
+      : "Stock";
+
+  if (!symbol || !name) return null;
+  return {
+    code: symbol,
+    name,
+    market: "US",
+    marketLabel: "미국 주식",
+    exchange,
+    assetType,
+  };
+}
+
+function mergeSearchItems(items) {
+  const merged = new Map();
+  items.filter(Boolean).forEach((item) => {
+    const key = item.code;
+    if (!merged.has(key)) {
+      merged.set(key, item);
+      return;
+    }
+
+    const current = merged.get(key);
+    if ((current.assetType !== "ETF" && item.assetType === "ETF") || (!current.exchange && item.exchange)) {
+      merged.set(key, { ...current, ...item });
+    }
+  });
+
+  return [...merged.values()];
+}
+
 async function loadUSTickers(env) {
   return remember("us-tickers", ONE_DAY, async () => {
     const response = await fetch(SEC_TICKERS_URL, { headers: secHeaders(env) });
@@ -76,24 +115,39 @@ async function loadUSTickers(env) {
 export async function searchUSStocks(query, env) {
   const list = await loadUSTickers(env);
   const normalized = query.trim().toLowerCase();
-  const filtered = !normalized
+  const localMatches = (!normalized
     ? list.slice(0, 20)
-    : list
-        .filter(
-          (item) =>
-            item.code.toLowerCase().includes(normalized) ||
-            item.name.toLowerCase().includes(normalized) ||
-            item.exchange.toLowerCase().includes(normalized),
-        )
-        .slice(0, 20);
-
-  return filtered.map((item) => ({
+    : list.filter(
+        (item) =>
+          item.code.toLowerCase().includes(normalized) ||
+          item.name.toLowerCase().includes(normalized) ||
+          item.exchange.toLowerCase().includes(normalized),
+      )
+  ).map((item) => ({
     code: item.code,
     name: item.name,
     market: "US",
     marketLabel: item.marketLabel,
     exchange: item.exchange,
+    assetType: "Stock",
   }));
+
+  if (!normalized || !env.FMP_API_KEY) {
+    return localMatches.slice(0, 20);
+  }
+
+  const remoteResponses = await Promise.allSettled([
+    fmpFetch("/search-symbol", { query: query.trim() }, env),
+    fmpFetch("/search-name", { query: query.trim() }, env),
+  ]);
+
+  const remoteMatches = remoteResponses
+    .filter((result) => result.status === "fulfilled")
+    .flatMap((result) => (Array.isArray(result.value) ? result.value : []))
+    .map(mapSearchRow)
+    .filter(Boolean);
+
+  return mergeSearchItems([...localMatches, ...remoteMatches]).slice(0, 20);
 }
 
 async function fmpFetch(path, params, env, ttl = HALF_DAY) {
@@ -250,22 +304,23 @@ function summarizeUS(history) {
 }
 
 async function getUSEtfData(code, env, stockMeta = null) {
-  const [quoteData, infoData] = await Promise.all([
+  const [quoteResult, profileResult] = await Promise.allSettled([
     fmpFetch("/quote", { symbol: code }, env),
-    fmpFetch("/etf/info", { symbol: code }, env),
+    fmpFetch("/profile", { symbol: code }, env),
   ]);
 
+  const quoteData = quoteResult.status === "fulfilled" ? quoteResult.value : [];
+  const profileData = profileResult.status === "fulfilled" ? profileResult.value : [];
   const quote = Array.isArray(quoteData) ? quoteData[0] ?? {} : quoteData ?? {};
-  const info = Array.isArray(infoData) ? infoData[0] ?? {} : infoData ?? {};
+  const profile = Array.isArray(profileData) ? profileData[0] ?? {} : profileData ?? {};
   const latestPrice = toNumber(quote.price);
-  const category = info.category || info.assetClass || "ETF";
-  const provider = info.issuer || info.provider || info.fundFamily || null;
-  const expenseRatio = toNumber(info.expenseRatio);
+  const category = profile.industry || profile.sector || "ETF";
+  const provider = profile.companyName || stockMeta?.name || null;
 
   return {
     stock: {
       code,
-      name: info.name || stockMeta?.name || code,
+      name: stockMeta?.name || profile.companyName || code,
       market: "US",
       marketLabel: "미국 주식",
       industry: category,
@@ -279,14 +334,13 @@ async function getUSEtfData(code, env, stockMeta = null) {
       "ETF는 개별 기업 재무제표 기반 7개 지표를 그대로 적용하기 어렵습니다. 이 화면에서는 ETF임을 표시하고, 백테스팅 탭에서 가격 기반 전략 검증에 집중하는 편이 적절합니다.",
     notes: [
       "ETF는 운영 구조가 기업과 달라 PER·PBR·ROE 같은 개별 기업용 재무지표가 비어 있을 수 있습니다.",
-      expenseRatio != null
-        ? `FMP ETF 정보 기준 총보수(Expense Ratio)는 ${expenseRatio}% 입니다.`
-        : "총보수, 자산규모, 추종지수 같은 ETF 전용 지표를 별도 탭으로 분리하는 것이 더 적합합니다.",
+      "총보수, 자산규모, 추종지수 같은 ETF 전용 지표를 별도 탭으로 분리하는 것이 더 적합합니다.",
       "SOXL 같은 레버리지 ETF는 장기 보유 시 복리 효과와 변동성 드래그 때문에 기초지수를 단순 배수로 따라가지 않습니다.",
     ],
     sources: [
       { label: "FMP ETF Symbol Search API", url: "https://site.financialmodelingprep.com/developer/docs/etf-list-api" },
-      { label: "FMP ETF & Mutual Fund Information API", url: "https://site.financialmodelingprep.com/developer/docs/stable/information" },
+      { label: "FMP Stock Symbol Search API", url: "https://site.financialmodelingprep.com/developer/docs/stable/search-symbol" },
+      { label: "FMP Company Name Search API", url: "https://site.financialmodelingprep.com/developer/docs/stable/search-name" },
       { label: "FMP Developer Docs", url: "https://site.financialmodelingprep.com/developer/docs/" },
     ],
   };
