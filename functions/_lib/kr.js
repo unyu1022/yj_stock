@@ -2,6 +2,7 @@ import { remember } from "./cache.js";
 import { metricDefinitions, percent, round, toNumber } from "./metrics.js";
 
 const ONE_DAY = 24 * 60 * 60 * 1000;
+const TEN_MINUTES = 10 * 60 * 1000;
 const OPEN_DART_BASE = "https://opendart.fss.or.kr/api";
 
 function ensureKey(env) {
@@ -9,11 +10,6 @@ function ensureKey(env) {
     throw new Error("국내 주식 조회에는 OPEN_DART_API_KEY 환경변수가 필요합니다.");
   }
   return env.OPEN_DART_API_KEY;
-}
-
-function getTagValue(block, tagName) {
-  const match = block.match(new RegExp(`<${tagName}>([\\s\\S]*?)</${tagName}>`));
-  return match ? match[1].trim() : "";
 }
 
 function dartHeaders(env) {
@@ -25,55 +21,74 @@ function dartHeaders(env) {
   };
 }
 
-async function unzipXml(buffer) {
-  const view = new DataView(buffer);
-  if (view.getUint32(0, true) !== 0x04034b50) {
-    throw new Error("OpenDART corpCode 압축 형식을 해석하지 못했습니다.");
+function recentDisclosureRanges() {
+  const end = new Date();
+  const ranges = [];
+  for (let i = 0; i < 4; i += 1) {
+    const rangeEnd = new Date(end);
+    rangeEnd.setUTCMonth(rangeEnd.getUTCMonth() - i * 3);
+    const rangeStart = new Date(rangeEnd);
+    rangeStart.setUTCMonth(rangeStart.getUTCMonth() - 3);
+    rangeStart.setUTCDate(rangeStart.getUTCDate() + 1);
+    ranges.push({
+      bgnDe: rangeStart.toISOString().slice(0, 10).replace(/-/g, ""),
+      endDe: rangeEnd.toISOString().slice(0, 10).replace(/-/g, ""),
+    });
   }
-
-  const compressionMethod = view.getUint16(8, true);
-  const compressedSize = view.getUint32(18, true);
-  const fileNameLength = view.getUint16(26, true);
-  const extraFieldLength = view.getUint16(28, true);
-  const dataStart = 30 + fileNameLength + extraFieldLength;
-  const compressed = buffer.slice(dataStart, dataStart + compressedSize);
-
-  if (compressionMethod === 0) {
-    return new TextDecoder("utf-8").decode(compressed);
-  }
-
-  if (compressionMethod === 8) {
-    const stream = new Blob([compressed]).stream().pipeThrough(new DecompressionStream("deflate-raw"));
-    return await new Response(stream).text();
-  }
-
-  throw new Error(`지원하지 않는 OpenDART 압축 방식입니다: ${compressionMethod}`);
+  return ranges;
 }
 
-async function loadCorpList(env) {
-  return remember("kr-corp-list", ONE_DAY, async () => {
-    const key = ensureKey(env);
-    const collected = new Map();
-    const end = new Date();
-    const ranges = [];
+function normalizeKrSearch(value) {
+  return (value || "").toLowerCase().replace(/\s+/g, "");
+}
 
-    for (let i = 0; i < 5; i += 1) {
-      const rangeEnd = new Date(end);
-      rangeEnd.setUTCMonth(rangeEnd.getUTCMonth() - i * 3);
-      const rangeStart = new Date(rangeEnd);
-      rangeStart.setUTCMonth(rangeStart.getUTCMonth() - 3);
-      rangeStart.setUTCDate(rangeStart.getUTCDate() + 1);
-      ranges.push({
-        bgnDe: rangeStart.toISOString().slice(0, 10).replace(/-/g, ""),
-        endDe: rangeEnd.toISOString().slice(0, 10).replace(/-/g, ""),
-      });
-    }
+function toSearchItem(item) {
+  return {
+    corpCode: item.corp_code,
+    code: item.stock_code,
+    name: item.corp_name,
+    market: "KR",
+    marketLabel: "국내 주식",
+  };
+}
 
-    for (const range of ranges) {
+function matchesQuery(item, normalizedQuery) {
+  return normalizeKrSearch(item.corp_name).includes(normalizedQuery) || (item.stock_code || "").includes(normalizedQuery);
+}
+
+async function fetchJson(url, env) {
+  const response = await fetch(url, {
+    headers: dartHeaders(env),
+    redirect: "manual",
+  });
+
+  if (response.status >= 300 && response.status < 400) {
+    const location = response.headers.get("location") || "unknown";
+    throw new Error(`OpenDART 요청이 리다이렉트되었습니다. location=${location}`);
+  }
+
+  const data = await response.json();
+  if (!response.ok) {
+    throw new Error(`OpenDART 조회 실패: HTTP ${response.status}`);
+  }
+  if (data.status !== "000" && data.status !== "013") {
+    throw new Error(`OpenDART 오류 ${data.status}: ${data.message}`);
+  }
+  return data;
+}
+
+async function searchRecentDisclosures(query, env, limit = 20) {
+  const normalizedQuery = normalizeKrSearch(query);
+  const key = ensureKey(env);
+  const found = new Map();
+
+  return remember(`kr-search:${normalizedQuery}`, TEN_MINUTES, async () => {
+    for (const range of recentDisclosureRanges()) {
       let page = 1;
       let totalPages = 1;
+      const maxPages = 8;
 
-      while (page <= totalPages) {
+      while (page <= totalPages && page <= maxPages && found.size < limit) {
         const params = new URLSearchParams({
           crtfc_key: key,
           bgn_de: range.bgnDe,
@@ -83,44 +98,68 @@ async function loadCorpList(env) {
         });
 
         const data = await fetchJson(`${OPEN_DART_BASE}/list.json?${params.toString()}`, env);
-        totalPages = Math.min(Number(data.total_page || 1), 200);
+        totalPages = Number(data.total_page || 1);
 
         for (const item of data.list ?? []) {
           if (!item.stock_code) continue;
-          if (!collected.has(item.stock_code)) {
-            collected.set(item.stock_code, {
-              corpCode: item.corp_code,
-              code: item.stock_code,
-              name: item.corp_name,
-              marketLabel: "국내 주식",
-            });
+          if (!matchesQuery(item, normalizedQuery)) continue;
+          if (!found.has(item.stock_code)) {
+            found.set(item.stock_code, toSearchItem(item));
           }
         }
 
         page += 1;
       }
+
+      if (found.size >= limit) break;
     }
 
-    const items = [...collected.values()].sort((a, b) => a.name.localeCompare(b.name, "ko"));
-    if (!items.length) {
-      throw new Error("OpenDART 공시 목록에서 국내 상장사 코드를 수집하지 못했습니다.");
+    return [...found.values()].slice(0, limit);
+  });
+}
+
+async function resolveCorpByCode(code, env) {
+  return remember(`kr-code:${code}`, ONE_DAY, async () => {
+    const key = ensureKey(env);
+
+    for (const range of recentDisclosureRanges()) {
+      let page = 1;
+      let totalPages = 1;
+      const maxPages = 12;
+
+      while (page <= totalPages && page <= maxPages) {
+        const params = new URLSearchParams({
+          crtfc_key: key,
+          bgn_de: range.bgnDe,
+          end_de: range.endDe,
+          page_no: String(page),
+          page_count: "100",
+        });
+
+        const data = await fetchJson(`${OPEN_DART_BASE}/list.json?${params.toString()}`, env);
+        totalPages = Number(data.total_page || 1);
+
+        const match = (data.list ?? []).find((item) => item.stock_code === code);
+        if (match) return toSearchItem(match);
+        page += 1;
+      }
     }
-    return items;
+
+    return null;
   });
 }
 
 export async function searchKRStocks(query, env) {
-  const list = await loadCorpList(env);
-  const normalized = query.trim().toLowerCase();
-  const filtered = !normalized
-    ? list.slice(0, 20)
-    : list.filter((item) => item.name.toLowerCase().includes(normalized) || item.code.includes(normalized)).slice(0, 20);
+  const normalized = normalizeKrSearch(query);
+  if (!normalized) return [];
 
-  return filtered.map((item) => ({
+  const items = await searchRecentDisclosures(query, env, 20);
+  return items.map((item) => ({
     code: item.code,
     name: item.name,
-    market: "KR",
+    market: item.market,
     marketLabel: item.marketLabel,
+    corpCode: item.corpCode,
   }));
 }
 
@@ -147,25 +186,6 @@ function candidateReports() {
     );
   }
   return years;
-}
-
-async function fetchJson(url, env) {
-  const response = await fetch(url, {
-    headers: dartHeaders(env),
-    redirect: "manual",
-  });
-  if (response.status >= 300 && response.status < 400) {
-    const location = response.headers.get("location") || "unknown";
-    throw new Error(`OpenDART 요청이 리다이렉트되었습니다. location=${location}`);
-  }
-  const data = await response.json();
-  if (!response.ok) {
-    throw new Error(`OpenDART 조회 실패: HTTP ${response.status}`);
-  }
-  if (data.status !== "000" && data.status !== "013") {
-    throw new Error(`OpenDART 오류 ${data.status}: ${data.message}`);
-  }
-  return data;
 }
 
 function normalizeName(value) {
@@ -290,11 +310,19 @@ function summarizeKr(history) {
   return `${latest.label} 기준으로 최근 재무지표를 반영했습니다. 국내 종목은 OpenDART 공시 지표와 재무제표를 조합해 분석합니다.`;
 }
 
-export async function getKRStockData(code, env) {
-  const list = await loadCorpList(env);
-  const corp = list.find((item) => item.code === code);
+export async function getKRStockData(code, env, corpCodeHint = "", nameHint = "") {
+  const corp = corpCodeHint
+    ? {
+        corpCode: corpCodeHint,
+        code,
+        name: nameHint || code,
+        market: "KR",
+        marketLabel: "국내 주식",
+      }
+    : await resolveCorpByCode(code, env);
+
   if (!corp) {
-    throw new Error("해당 국내 종목을 찾지 못했습니다.");
+    throw new Error("해당 국내 종목을 최근 OpenDART 공시 목록에서 찾지 못했습니다.");
   }
 
   const history = [];
@@ -325,7 +353,7 @@ export async function getKRStockData(code, env) {
     history,
     summaryNote: summarizeKr(history),
     notes: [
-      "국내 주식 검색은 OpenDART 최근 공시 목록에서 종목코드와 고유번호를 수집해 제공합니다.",
+      "국내 주식 검색은 최근 OpenDART 공시에서 검색어와 일치하는 종목만 찾아 호출 수를 줄였습니다.",
       "PER, PBR, ROE, 영업이익률, 부채비율, 배당수익률은 OpenDART 주요 지표 응답을 사용했습니다.",
       "ROIC는 OpenDART 재무제표 계정값으로 근사 계산했습니다.",
     ],
