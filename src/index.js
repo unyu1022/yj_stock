@@ -1,3 +1,4 @@
+import { onRequestGet as onBacktest } from "../functions/api/backtest.js";
 import { onRequestGet as onMaster } from "../functions/api/master.js";
 import { onRequestGet as onSearch } from "../functions/api/search.js";
 import { onRequestGet as onStock } from "../functions/api/stock.js";
@@ -13,6 +14,10 @@ export default {
 
     if (request.method === "GET" && url.pathname === "/api/master") {
       return onMaster({ request, env });
+    }
+
+    if (request.method === "GET" && url.pathname === "/api/backtest") {
+      return onBacktest({ request, env });
     }
 
     if (request.method === "GET" && url.pathname === "/api/stock") {
