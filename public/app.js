@@ -289,10 +289,24 @@ function renderSearchResults(items, query) {
 
 async function fetchJson(url) {
   const response = await fetch(url);
-  const data = await response.json();
-  if (!response.ok || data.ok === false) {
-    throw new Error(data.error ?? "데이터를 불러오지 못했습니다.");
+  const text = await response.text();
+  let data = null;
+
+  if (text) {
+    try {
+      data = JSON.parse(text);
+    } catch (error) {
+      throw new Error(`API 응답을 JSON으로 해석하지 못했습니다. status=${response.status}`);
+    }
   }
+
+  if (!response.ok || data?.ok === false) {
+    throw new Error(data?.error ?? `데이터를 불러오지 못했습니다. status=${response.status}`);
+  }
+  if (!data) {
+    throw new Error(`API 응답 본문이 비어 있습니다. status=${response.status}`);
+  }
+
   return data;
 }
 
