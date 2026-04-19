@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <meta
       name="description"
-      content="국내 주식과 미국 주식을 검색하고 7가지 핵심 지표와 최근 1년 분기 흐름을 모바일에서 분석하는 투자 인사이트 PWA"
+      content="미국 주식을 검색하고 7가지 핵심 지표와 최근 1년 분기 흐름, 백테스팅 준비 화면을 모바일에서 확인하는 투자 인사이트 PWA"
     />
     <meta name="theme-color" content="#0d2a45" />
     <link rel="manifest" href="./manifest.webmanifest" />
@@ -17,25 +17,19 @@
   <body>
     <div class="app-shell">
       <header class="hero">
-        <p class="eyebrow">Mobile PWA</p>
-        <h1>한 종목을 깊게 보는<br />Stock Insight</h1>
+        <p class="eyebrow">US Equity PWA</p>
+        <h1>미국 주식 분석과<br />백테스팅 준비</h1>
         <p class="hero-copy">
-          국내 주식과 미국 주식 중 한 종목을 선택해 7가지 핵심 지표와 최근 1년간 분기
-          흐름을 함께 분석해보세요. 현재 버전은 상세 분석 화면에 집중한 구조이며, 이후
-          API 연동으로 범위를 확장할 수 있게 설계했습니다.
+          미국 주식 한 종목을 검색해 7가지 핵심 지표와 최근 1년 분기 흐름을 확인하고,
+          이어서 같은 종목 기준으로 백테스팅 조건까지 준비할 수 있게 구성한 모바일 전용 화면입니다.
         </p>
       </header>
 
       <main class="content">
         <section class="panel controls">
           <div class="section-heading">
-            <p class="section-kicker">Step 1</p>
-            <h2>시장과 종목 선택</h2>
-          </div>
-
-          <div class="market-tabs" id="marketTabs" aria-label="시장 선택">
-            <button class="market-tab active" type="button" data-market="KR">국내 주식</button>
-            <button class="market-tab" type="button" data-market="US">미국 주식</button>
+            <p class="section-kicker">Search</p>
+            <h2>미국 주식 선택</h2>
           </div>
 
           <label class="field-label" for="stock-search">종목 검색</label>
@@ -43,52 +37,109 @@
             id="stock-search"
             class="search-input"
             type="search"
-            placeholder="예: 삼성전자, 005930, Apple, AAPL"
+            placeholder="예: Apple, AAPL, Microsoft, MSFT"
             autocomplete="off"
           />
           <div id="search-results" class="search-results" role="listbox" aria-label="종목 검색 결과"></div>
           <div id="selection-summary" class="selection-summary"></div>
         </section>
 
-        <section class="panel overview">
-          <div class="section-heading">
-            <p class="section-kicker">Step 2</p>
-            <h2>현재 평가와 전망</h2>
-          </div>
-          <div id="insightSummary" class="compare-summary empty-state">
-            종목을 선택하면 현재 평가와 전망이 표시됩니다.
-          </div>
+        <section id="tab-fundamentals" class="tab-screen active" data-screen="fundamentals">
+          <section class="panel overview">
+            <div class="section-heading">
+              <p class="section-kicker">Overview</p>
+              <h2>현재 평가와 전망</h2>
+            </div>
+            <div id="insightSummary" class="compare-summary empty-state">
+              종목을 선택하면 현재 평가와 전망이 표시됩니다.
+            </div>
+          </section>
+
+          <section class="panel analysis">
+            <div class="section-heading">
+              <p class="section-kicker">Metrics</p>
+              <h2>7가지 핵심 지표</h2>
+            </div>
+            <div id="metricGrid" class="metric-grid"></div>
+          </section>
+
+          <section class="panel quarterly">
+            <div class="section-heading">
+              <p class="section-kicker">Quarterly</p>
+              <h2>최근 1년 분기 흐름</h2>
+            </div>
+            <div id="quarterlyTrend" class="quarterly-grid"></div>
+          </section>
+
+          <section class="panel notes">
+            <div class="section-heading">
+              <p class="section-kicker">Notes</p>
+              <h2>분석 메모</h2>
+            </div>
+            <ul class="notes-list"></ul>
+          </section>
         </section>
 
-        <section class="panel analysis">
-          <div class="section-heading">
-            <p class="section-kicker">Step 3</p>
-            <h2>7가지 핵심 지표</h2>
-          </div>
-          <div id="metricGrid" class="metric-grid"></div>
-        </section>
+        <section id="tab-backtest" class="tab-screen" data-screen="backtest">
+          <section class="panel backtest-panel">
+            <div class="section-heading">
+              <p class="section-kicker">Backtesting</p>
+              <h2>전략 조건 준비</h2>
+            </div>
+            <div class="backtest-grid">
+              <article class="summary-card">
+                <p class="section-kicker">Target</p>
+                <h3>분석 대상</h3>
+                <p id="backtestTarget">아직 종목이 선택되지 않았습니다. 먼저 미국 주식 종목을 선택하세요.</p>
+              </article>
+              <article class="summary-card">
+                <p class="section-kicker">Rule Set</p>
+                <h3>기본 진입 조건</h3>
+                <div class="backtest-fields">
+                  <label class="field-label" for="entry-rule">진입 기준</label>
+                  <select id="entry-rule" class="search-input">
+                    <option value="value-quality">가치 + 수익성</option>
+                    <option value="quality-trend">수익성 + 추세</option>
+                    <option value="dividend-defensive">배당 + 방어형</option>
+                  </select>
 
-        <section class="panel quarterly">
-          <div class="section-heading">
-            <p class="section-kicker">Step 4</p>
-            <h2>최근 1년 분기 흐름</h2>
-          </div>
-          <div id="quarterlyTrend" class="quarterly-grid"></div>
-        </section>
+                  <label class="field-label" for="holding-period">보유 기간</label>
+                  <select id="holding-period" class="search-input">
+                    <option value="63">3개월</option>
+                    <option value="126">6개월</option>
+                    <option value="252">12개월</option>
+                  </select>
 
-        <section class="panel notes">
-          <div class="section-heading">
-            <p class="section-kicker">Next</p>
-            <h2>확장 메모</h2>
-          </div>
-          <ul class="notes-list">
-            <li>현재 버전은 실데이터 상세 분석 화면에 집중한 구조입니다.</li>
-            <li>국내 주식은 OpenDART 기반으로, 미국 주식은 SEC와 FMP 기반으로 조회합니다.</li>
-            <li>Cloudflare Workers Builds 환경에 맞게 Worker + 정적 자산 구조로 배포됩니다.</li>
-          </ul>
+                  <label class="field-label" for="rebalance-cycle">리밸런싱</label>
+                  <select id="rebalance-cycle" class="search-input">
+                    <option value="quarterly">분기별</option>
+                    <option value="monthly">월별</option>
+                    <option value="semiannual">반기별</option>
+                  </select>
+                </div>
+              </article>
+              <article class="summary-card">
+                <p class="section-kicker">Status</p>
+                <h3>다음 단계</h3>
+                <p>
+                  이 탭은 백테스팅 엔진을 붙이기 위한 준비 화면입니다. 현재는 선택 종목과
+                  전략 조건을 정리하는 단계이며, 다음 구현에서는 기간별 수익률과 매수·매도 규칙을 실제로 계산할 수 있게 연결할 예정입니다.
+                </p>
+              </article>
+            </div>
+          </section>
         </section>
       </main>
     </div>
+
+    <nav class="bottom-nav" aria-label="하단 탭 메뉴">
+      <button class="bottom-tab active" type="button" data-tab="fundamentals">
+        <span class="bottom-tab-label">재무제표</span>
+      </button>
+      <button class="bottom-tab" type="button" data-tab="backtest">
+        <span class="bottom-tab-label">백테스팅</span>
+      </button>
+    </nav>
 
     <script type="module" src="./app.js"></script>
   </body>
