@@ -189,58 +189,111 @@ function candidateReports() {
 }
 
 function normalizeName(value) {
-  return value.toLowerCase().replace(/[^a-z]/g, "");
+  return String(value || "")
+    .toLowerCase()
+    .replace(/[\s_\-()/.,]/g, "")
+    .trim();
+}
+
+function includesAny(value, patterns) {
+  return patterns.some((pattern) => value.includes(pattern));
+}
+
+function normalizeAccountId(value) {
+  return normalizeName(value).replace(/[^a-z0-9]/g, "");
 }
 
 function indicatorMap(list) {
   const map = {};
   for (const item of list ?? []) {
     const name = normalizeName(item.idx_nm || "");
-    if (!map.per && name === "per") map.per = toNumber(item.idx_val);
-    if (!map.pbr && name === "pbr") map.pbr = toNumber(item.idx_val);
-    if (!map.roe && (name.includes("returnonequity") || name === "roe")) map.roe = percent(toNumber(item.idx_val), 1);
-    if (!map.operatingMargin && name.includes("operatingincomemargin")) map.operatingMargin = percent(toNumber(item.idx_val), 1);
-    if (!map.debtRatio && name.includes("debtratio")) map.debtRatio = percent(toNumber(item.idx_val), 1);
-    if (!map.dividendYield && name.includes("dividendyield")) map.dividendYield = percent(toNumber(item.idx_val), 1);
+    const value = toNumber(item.idx_val);
+    if (!map.per && includesAny(name, ["per", "priceearningratio", "주가수익비율"])) map.per = value;
+    if (!map.pbr && includesAny(name, ["pbr", "pricetobookratio", "주가순자산비율"])) map.pbr = value;
+    if (!map.roe && includesAny(name, ["roe", "returnonequity", "자기자본이익률"])) map.roe = value;
+    if (!map.operatingMargin && includesAny(name, ["operatingincomemargin", "operatingmargin", "영업이익률"])) {
+      map.operatingMargin = value;
+    }
+    if (!map.debtRatio && includesAny(name, ["debtratio", "부채비율"])) map.debtRatio = value;
+    if (!map.dividendYield && includesAny(name, ["dividendyield", "cashdividendyield", "배당수익률"])) {
+      map.dividendYield = value;
+    }
   }
   return map;
 }
 
-function sumMatching(lines, sjDiv, patterns) {
-  return lines
-    .filter((line) => line.sj_div === sjDiv)
-    .filter((line) => patterns.some((pattern) => normalizeName(line.account_nm || "").includes(pattern)))
-    .reduce((total, line) => total + (toNumber(line.thstrm_amount) ?? 0), 0);
+function pickAmount(line) {
+  if (!line) return null;
+  return toNumber(line.thstrm_amount) ?? toNumber(line.thstrm_add_amount) ?? toNumber(line.frmtrm_amount) ?? null;
 }
 
-function firstMatching(lines, sjDiv, patterns) {
-  const line = lines.find(
-    (entry) =>
-      entry.sj_div === sjDiv &&
-      patterns.some((pattern) => normalizeName(entry.account_nm || "").includes(pattern)),
-  );
-  return line ? toNumber(line.thstrm_amount) : null;
+function findStatementValue(lines, sjDivs, accountIdPatterns, accountNamePatterns) {
+  const line = (lines ?? []).find((entry) => {
+    if (!sjDivs.includes(entry.sj_div)) return false;
+    const accountId = normalizeAccountId(entry.account_id || "");
+    const accountName = normalizeName(entry.account_nm || "");
+    return includesAny(accountId, accountIdPatterns) || includesAny(accountName, accountNamePatterns);
+  });
+  return pickAmount(line);
+}
+
+function sumStatementValues(lines, sjDivs, accountIdPatterns, accountNamePatterns) {
+  return (lines ?? [])
+    .filter((entry) => sjDivs.includes(entry.sj_div))
+    .filter((entry) => {
+      const accountId = normalizeAccountId(entry.account_id || "");
+      const accountName = normalizeName(entry.account_nm || "");
+      return includesAny(accountId, accountIdPatterns) || includesAny(accountName, accountNamePatterns);
+    })
+    .reduce((total, line) => total + (pickAmount(line) ?? 0), 0);
 }
 
 function computeKrRoic(lines) {
-  const operatingIncome =
-    firstMatching(lines, "IS", ["operatingincome", "profitlossfromoperations"]) ??
-    firstMatching(lines, "CIS", ["operatingincome", "profitlossfromoperations"]);
-  const incomeTax = firstMatching(lines, "IS", ["incometaxexpense"]) ?? firstMatching(lines, "CIS", ["incometaxexpense"]);
-  const profitBeforeTax =
-    firstMatching(lines, "IS", ["profitlossbeforetax"]) ?? firstMatching(lines, "CIS", ["profitlossbeforetax"]);
+  const operatingIncome = findStatementValue(
+    lines,
+    ["IS", "CIS"],
+    ["operatingincomeloss", "profitlossfromoperations"],
+    ["operatingincome", "profitlossfromoperations", "영업이익"],
+  );
+  const incomeTax = findStatementValue(
+    lines,
+    ["IS", "CIS"],
+    ["incometaxexpensecontinuingoperations", "incometaxexpensebenefit"],
+    ["incometaxexpense", "법인세비용"],
+  );
+  const profitBeforeTax = findStatementValue(
+    lines,
+    ["IS", "CIS"],
+    ["profitlossbeforetax", "profitlossbeforetaxexpense"],
+    ["profitlossbeforetax", "법인세비용차감전순이익"],
+  );
 
-  const equity = firstMatching(lines, "BS", ["totalequity", "equity"]);
-  const cash = sumMatching(lines, "BS", ["cashandcashequivalents", "shorttermfinancialinstruments"]);
-  const debt = sumMatching(lines, "BS", [
-    "shorttermborrowings",
-    "longtermborrowings",
-    "currentportionoflongtermborrowings",
-    "debentures",
-    "bondsissued",
-    "lease liabilities".replace(/\s/g, ""),
-    "currentlease liabilities".replace(/\s/g, ""),
-  ]);
+  const equity = findStatementValue(
+    lines,
+    ["BS"],
+    ["equity", "equityattributabletoownersofparent"],
+    ["totalequity", "equity", "자본총계", "지배기업의소유주지분"],
+  );
+  const cash = sumStatementValues(
+    lines,
+    ["BS"],
+    ["cashandcashequivalents", "shorttermfinancialinstruments", "currentfinancialassets"],
+    ["cashandcashequivalents", "shorttermfinancialinstruments", "현금및현금성자산", "단기금융상품"],
+  );
+  const debt = sumStatementValues(
+    lines,
+    ["BS"],
+    [
+      "shorttermborrowings",
+      "longtermborrowings",
+      "currentportionoflongtermborrowings",
+      "debentures",
+      "bondsissued",
+      "leaseliabilities",
+      "currentleaseliabilities",
+    ],
+    ["shorttermborrowings", "longtermborrowings", "debentures", "차입금", "사채", "리스부채"],
+  );
 
   if (operatingIncome == null || equity == null) return null;
 
@@ -251,6 +304,46 @@ function computeKrRoic(lines) {
   const nopat = operatingIncome * (1 - effectiveTaxRate);
   const investedCapital = equity + debt - cash;
   return percent(nopat, investedCapital);
+}
+
+function deriveMetricsFromStatements(lines) {
+  const revenue = findStatementValue(
+    lines,
+    ["IS", "CIS"],
+    ["revenue", "salesrevenue"],
+    ["revenue", "salesrevenue", "매출액", "영업수익"],
+  );
+  const operatingIncome = findStatementValue(
+    lines,
+    ["IS", "CIS"],
+    ["operatingincomeloss", "profitlossfromoperations"],
+    ["operatingincome", "profitlossfromoperations", "영업이익"],
+  );
+  const netIncome = findStatementValue(
+    lines,
+    ["IS", "CIS"],
+    ["profitloss", "profitlossattributabletoownersofparent"],
+    ["profitloss", "당기순이익", "분기순이익", "지배기업소유주지분순이익"],
+  );
+  const equity = findStatementValue(
+    lines,
+    ["BS"],
+    ["equity", "equityattributabletoownersofparent"],
+    ["totalequity", "equity", "자본총계", "지배기업의소유주지분"],
+  );
+  const liabilities = findStatementValue(
+    lines,
+    ["BS"],
+    ["liabilities"],
+    ["liabilities", "부채총계"],
+  );
+
+  return {
+    roe: percent(netIncome, equity),
+    roic: computeKrRoic(lines),
+    operatingMargin: percent(operatingIncome, revenue),
+    debtRatio: percent(liabilities, equity),
+  };
 }
 
 async function fetchKrIndicators(corpCode, bsnsYear, reprtCode, env) {
@@ -283,12 +376,14 @@ async function fetchKrStatements(corpCode, bsnsYear, reprtCode, env) {
 }
 
 async function fetchQuarterSnapshot(corp, period, env) {
-  const indicators = await fetchKrIndicators(corp.corpCode, period.bsnsYear, period.reprtCode, env);
-  if (!indicators.length) return null;
+  const [indicators, statements] = await Promise.all([
+    fetchKrIndicators(corp.corpCode, period.bsnsYear, period.reprtCode, env).catch(() => []),
+    fetchKrStatements(corp.corpCode, period.bsnsYear, period.reprtCode, env).catch(() => []),
+  ]);
+  if (!indicators.length && !statements.length) return null;
 
-  const statements = await fetchKrStatements(corp.corpCode, period.bsnsYear, period.reprtCode, env);
   const mapped = indicatorMap(indicators);
-  const roic = computeKrRoic(statements);
+  const derived = deriveMetricsFromStatements(statements);
 
   return {
     label: reprtLabel(period.bsnsYear, period.reprtCode),
@@ -296,10 +391,10 @@ async function fetchQuarterSnapshot(corp, period, env) {
     metrics: {
       per: round(mapped.per),
       pbr: round(mapped.pbr),
-      roe: round(mapped.roe),
-      roic: round(roic),
-      operatingMargin: round(mapped.operatingMargin),
-      debtRatio: round(mapped.debtRatio),
+      roe: round(mapped.roe ?? derived.roe),
+      roic: round(derived.roic),
+      operatingMargin: round(mapped.operatingMargin ?? derived.operatingMargin),
+      debtRatio: round(mapped.debtRatio ?? derived.debtRatio),
       dividendYield: round(mapped.dividendYield),
     },
   };
