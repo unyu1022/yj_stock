@@ -208,14 +208,14 @@ function indicatorMap(list) {
   for (const item of list ?? []) {
     const name = normalizeName(item.idx_nm || "");
     const value = toNumber(item.idx_val);
-    if (!map.per && includesAny(name, ["per", "priceearningratio", "주가수익비율"])) map.per = value;
-    if (!map.pbr && includesAny(name, ["pbr", "pricetobookratio", "주가순자산비율"])) map.pbr = value;
-    if (!map.roe && includesAny(name, ["roe", "returnonequity", "자기자본이익률"])) map.roe = value;
-    if (!map.operatingMargin && includesAny(name, ["operatingincomemargin", "operatingmargin", "영업이익률"])) {
+    if (!map.per && ["per", "priceearningratio", "주가수익비율"].includes(name)) map.per = value;
+    if (!map.pbr && ["pbr", "pricetobookratio", "주가순자산비율"].includes(name)) map.pbr = value;
+    if (!map.roe && ["roe", "returnonequity", "자기자본이익률"].includes(name)) map.roe = value;
+    if (!map.operatingMargin && ["operatingincomemargin", "operatingmargin", "영업이익률"].includes(name)) {
       map.operatingMargin = value;
     }
-    if (!map.debtRatio && includesAny(name, ["debtratio", "부채비율"])) map.debtRatio = value;
-    if (!map.dividendYield && includesAny(name, ["dividendyield", "cashdividendyield", "배당수익률"])) {
+    if (!map.debtRatio && ["debtratio", "부채비율"].includes(name)) map.debtRatio = value;
+    if (!map.dividendYield && ["dividendyield", "cashdividendyield", "배당수익률"].includes(name)) {
       map.dividendYield = value;
     }
   }
@@ -393,7 +393,7 @@ async function fetchQuarterSnapshot(corp, period, env) {
       pbr: round(mapped.pbr),
       roe: round(mapped.roe ?? derived.roe),
       roic: round(derived.roic),
-      operatingMargin: round(mapped.operatingMargin ?? derived.operatingMargin),
+      operatingMargin: round(derived.operatingMargin ?? mapped.operatingMargin),
       debtRatio: round(mapped.debtRatio ?? derived.debtRatio),
       dividendYield: round(mapped.dividendYield),
     },
