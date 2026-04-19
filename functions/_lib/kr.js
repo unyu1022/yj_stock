@@ -126,6 +126,59 @@ async function fetchNaverMarketMetrics(code) {
   });
 }
 
+async function fetchNaverPriceHistory(code) {
+  return remember(`kr-price:${code}`, TEN_MINUTES, async () => {
+    const endDate = new Date();
+    const startDate = new Date(endDate);
+    startDate.setUTCFullYear(startDate.getUTCFullYear() - 2);
+
+    const url =
+      `https://api.finance.naver.com/siseJson.naver?symbol=${code}` +
+      `&requestType=1&startTime=${startDate.toISOString().slice(0, 10).replace(/-/g, "")}` +
+      `&endTime=${endDate.toISOString().slice(0, 10).replace(/-/g, "")}` +
+      `&timeframe=day`;
+
+    const response = await fetch(url, {
+      headers: {
+        "user-agent": "Mozilla/5.0",
+        referer: "https://finance.naver.com/",
+      },
+    });
+
+    if (!response.ok) {
+      throw new Error(`Naver price history 조회 실패: HTTP ${response.status}`);
+    }
+
+    const text = await response.text();
+    const prices = [];
+    for (const match of text.matchAll(/\["(\d{8})",\s*[^,]+,\s*[^,]+,\s*[^,]+,\s*([\d.]+),/g)) {
+      prices.push({ date: match[1], close: Number(match[2]) });
+    }
+    return prices;
+  });
+}
+
+function endDateFromLabel(label) {
+  const [year, suffix] = label.split(" ");
+  const map = {
+    Q1: `${year}0331`,
+    Q2: `${year}0630`,
+    Q3: `${year}0930`,
+    FY: `${year}1231`,
+  };
+  return map[suffix] ?? null;
+}
+
+function closeOnOrBefore(prices, targetDate) {
+  if (!targetDate) return null;
+  let found = null;
+  for (const price of prices || []) {
+    if (price.date <= targetDate) found = price.close;
+    if (price.date > targetDate) break;
+  }
+  return found;
+}
+
 async function searchRecentDisclosures(query, env, limit = 20) {
   const normalizedQuery = normalizeKrSearch(query);
   const key = ensureKey(env);
@@ -424,19 +477,54 @@ async function fetchKrStatements(corpCode, bsnsYear, reprtCode, env) {
   return fallback.list ?? [];
 }
 
+async function fetchKrShareCount(corpCode, bsnsYear, reprtCode, env) {
+  const key = ensureKey(env);
+  const data = await fetchJson(
+    `${OPEN_DART_BASE}/stockTotqySttus.json?crtfc_key=${key}&corp_code=${corpCode}&bsns_year=${bsnsYear}&reprt_code=${reprtCode}`,
+    env,
+  );
+
+  const total =
+    (data.list ?? []).find((item) => item.se === "합계") ??
+    (data.list ?? []).find((item) => item.se === "보통주") ??
+    null;
+
+  if (!total) return null;
+
+  return (
+    toNumber(total.distb_stock_co) ??
+    ((toNumber(total.isu_stock_totqy) ?? 0) - (toNumber(total.tesstk_co) ?? 0)) ??
+    null
+  );
+}
+
 async function fetchQuarterSnapshot(corp, period, env) {
-  const [indicators, statements] = await Promise.all([
+  const [indicators, statements, shareCount] = await Promise.all([
     fetchKrIndicators(corp.corpCode, period.bsnsYear, period.reprtCode, env).catch(() => []),
     fetchKrStatements(corp.corpCode, period.bsnsYear, period.reprtCode, env).catch(() => []),
+    fetchKrShareCount(corp.corpCode, period.bsnsYear, period.reprtCode, env).catch(() => null),
   ]);
   if (!indicators.length && !statements.length) return null;
 
   const mapped = indicatorMap(indicators);
   const derived = deriveMetricsFromStatements(statements);
+  const earnings = findStatementValue(
+    statements,
+    ["IS", "CIS"],
+    ["profitloss", "profitlossattributabletoownersofparent"],
+    ["profitloss", "당기순이익", "분기순이익", "지배기업소유주지분순이익"],
+  );
+  const equity = findStatementValue(
+    statements,
+    ["BS"],
+    ["equity", "equityattributabletoownersofparent"],
+    ["totalequity", "equity", "자본총계", "지배기업의소유주지분"],
+  );
 
   return {
     label: reprtLabel(period.bsnsYear, period.reprtCode),
     headline: period.reprtCode === "11011" ? "연간 보고" : "분기 보고",
+    period: { bsnsYear: period.bsnsYear, reprtCode: period.reprtCode },
     metrics: {
       per: round(mapped.per),
       pbr: round(mapped.pbr),
@@ -445,6 +533,11 @@ async function fetchQuarterSnapshot(corp, period, env) {
       operatingMargin: round(derived.operatingMargin ?? mapped.operatingMargin),
       debtRatio: round(mapped.debtRatio ?? derived.debtRatio),
       dividendYield: round(mapped.dividendYield),
+    },
+    raw: {
+      earnings,
+      equity,
+      shareCount,
     },
   };
 }
@@ -462,11 +555,38 @@ function mergeLatestMarketMetrics(latestSnapshot, marketMetrics) {
   return latestSnapshot;
 }
 
+function annualizationFactor(reprtCode) {
+  if (reprtCode === "11013") return 4;
+  if (reprtCode === "11012") return 2;
+  if (reprtCode === "11014") return 4 / 3;
+  return 1;
+}
+
+function enrichHistoricalValuation(history, prices, marketMetrics) {
+  for (const snapshot of history) {
+    const closePrice = closeOnOrBefore(prices, endDateFromLabel(snapshot.label));
+    const shareCount = snapshot.raw?.shareCount ?? null;
+    const equity = snapshot.raw?.equity ?? null;
+    const earnings = snapshot.raw?.earnings ?? null;
+
+    const bps = shareCount && equity ? equity / shareCount : null;
+    const epsAnnualized = shareCount && earnings ? (earnings / shareCount) * annualizationFactor(snapshot.period?.reprtCode) : null;
+    const dividendPerShare = marketMetrics?.dividendPerShare ?? null;
+
+    snapshot.metrics = {
+      ...snapshot.metrics,
+      per: round(closePrice != null && epsAnnualized ? closePrice / epsAnnualized : snapshot.metrics.per),
+      pbr: round(closePrice != null && bps ? closePrice / bps : snapshot.metrics.pbr),
+      dividendYield: round(closePrice != null && dividendPerShare ? (dividendPerShare / closePrice) * 100 : snapshot.metrics.dividendYield),
+    };
+  }
+}
+
 function summarizeKr(history, marketMetrics) {
   const latest = history[history.length - 1];
   const marketSuffix =
     marketMetrics?.price != null
-      ? ` PER·PBR·배당수익률은 네이버 증권 최신 시세(${marketMetrics.price.toLocaleString("ko-KR")}원) 기준으로 보완했습니다.`
+      ? ` PER·PBR·배당수익률은 분기말 종가와 주식수를 기준으로 보완했고, 최신 기준가는 네이버 증권 시세(${marketMetrics.price.toLocaleString("ko-KR")}원)를 사용했습니다.`
       : "";
 
   return `${latest.label} 기준으로 최근 재무지표를 반영했습니다. 국내 종목은 OpenDART 공시 지표와 재무제표를 조합해 분석합니다.${marketSuffix}`;
@@ -500,7 +620,11 @@ export async function getKRStockData(code, env, corpCodeHint = "", nameHint = ""
 
   history.reverse();
   const latest = history[history.length - 1];
-  const marketMetrics = await fetchNaverMarketMetrics(corp.code).catch(() => null);
+  const [marketMetrics, priceHistory] = await Promise.all([
+    fetchNaverMarketMetrics(corp.code).catch(() => null),
+    fetchNaverPriceHistory(corp.code).catch(() => []),
+  ]);
+  enrichHistoricalValuation(history, priceHistory, marketMetrics);
   mergeLatestMarketMetrics(latest, marketMetrics);
 
   return {
@@ -519,7 +643,8 @@ export async function getKRStockData(code, env, corpCodeHint = "", nameHint = ""
     notes: [
       "국내 주식 검색은 최근 OpenDART 공시에서 검색어와 일치하는 종목만 찾아 호출 수를 줄였습니다.",
       "ROE·ROIC·영업이익률·부채비율은 OpenDART 재무지표와 재무제표를 기준으로 계산합니다.",
-      "PER·PBR·배당수익률은 최신 시장가격이 필요하므로 네이버 증권 시세 응답으로 보완합니다.",
+      "PER·PBR은 분기말 종가와 분기 재무값, 주식수를 조합한 근사치입니다.",
+      "배당수익률은 최신 주당배당금과 분기말 종가를 기준으로 비교용으로 보완합니다.",
     ],
     sources: [
       { label: "OpenDART Disclosure Search", url: "https://opendart.fss.or.kr/guide/main.do?apiGrpCd=DS002" },
