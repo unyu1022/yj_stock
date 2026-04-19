@@ -4,6 +4,7 @@ import { metricDefinitions, percent, round, toNumber } from "./metrics.js";
 const ONE_DAY = 24 * 60 * 60 * 1000;
 const TEN_MINUTES = 10 * 60 * 1000;
 const OPEN_DART_BASE = "https://opendart.fss.or.kr/api";
+const NAVER_MOBILE_BASE = "https://m.stock.naver.com/api/stock";
 
 function ensureKey(env) {
   if (!env.OPEN_DART_API_KEY) {
@@ -75,6 +76,54 @@ async function fetchJson(url, env) {
     throw new Error(`OpenDART 오류 ${data.status}: ${data.message}`);
   }
   return data;
+}
+
+async function fetchNaverJson(url) {
+  const response = await fetch(url, {
+    headers: {
+      "user-agent": "Mozilla/5.0",
+      accept: "application/json, text/plain, */*",
+      "accept-language": "ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7",
+      referer: "https://m.stock.naver.com/",
+    },
+  });
+
+  if (!response.ok) {
+    throw new Error(`Naver Finance 조회 실패: HTTP ${response.status}`);
+  }
+
+  return response.json();
+}
+
+function parseLooseNumber(value) {
+  if (value == null) return null;
+  const normalized = String(value).replace(/[^\d.-]/g, "");
+  if (!normalized) return null;
+  const parsed = Number(normalized);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function infoValue(totalInfos, code) {
+  const entry = (totalInfos || []).find((item) => item.code === code);
+  return entry?.value ?? null;
+}
+
+async function fetchNaverMarketMetrics(code) {
+  return remember(`kr-naver:${code}`, TEN_MINUTES, async () => {
+    const data = await fetchNaverJson(`${NAVER_MOBILE_BASE}/${code}/integration`);
+    const totalInfos = data.totalInfos || [];
+
+    return {
+      per: parseLooseNumber(infoValue(totalInfos, "per")),
+      pbr: parseLooseNumber(infoValue(totalInfos, "pbr")),
+      dividendYield: parseLooseNumber(infoValue(totalInfos, "dividendYieldRatio")),
+      eps: parseLooseNumber(infoValue(totalInfos, "eps")),
+      bps: parseLooseNumber(infoValue(totalInfos, "bps")),
+      dividendPerShare: parseLooseNumber(infoValue(totalInfos, "dividend")),
+      price: parseLooseNumber(data.closePrice),
+      priceDate: data.localTradedAt || null,
+    };
+  });
 }
 
 async function searchRecentDisclosures(query, env, limit = 20) {
@@ -400,9 +449,27 @@ async function fetchQuarterSnapshot(corp, period, env) {
   };
 }
 
-function summarizeKr(history) {
+function mergeLatestMarketMetrics(latestSnapshot, marketMetrics) {
+  if (!latestSnapshot || !marketMetrics) return latestSnapshot;
+
+  latestSnapshot.metrics = {
+    ...latestSnapshot.metrics,
+    per: round(marketMetrics.per ?? latestSnapshot.metrics.per),
+    pbr: round(marketMetrics.pbr ?? latestSnapshot.metrics.pbr),
+    dividendYield: round(marketMetrics.dividendYield ?? latestSnapshot.metrics.dividendYield),
+  };
+
+  return latestSnapshot;
+}
+
+function summarizeKr(history, marketMetrics) {
   const latest = history[history.length - 1];
-  return `${latest.label} 기준으로 최근 재무지표를 반영했습니다. 국내 종목은 OpenDART 공시 지표와 재무제표를 조합해 분석합니다.`;
+  const marketSuffix =
+    marketMetrics?.price != null
+      ? ` PER·PBR·배당수익률은 네이버 증권 최신 시세(${marketMetrics.price.toLocaleString("ko-KR")}원) 기준으로 보완했습니다.`
+      : "";
+
+  return `${latest.label} 기준으로 최근 재무지표를 반영했습니다. 국내 종목은 OpenDART 공시 지표와 재무제표를 조합해 분석합니다.${marketSuffix}`;
 }
 
 export async function getKRStockData(code, env, corpCodeHint = "", nameHint = "") {
@@ -433,6 +500,8 @@ export async function getKRStockData(code, env, corpCodeHint = "", nameHint = ""
 
   history.reverse();
   const latest = history[history.length - 1];
+  const marketMetrics = await fetchNaverMarketMetrics(corp.code).catch(() => null);
+  mergeLatestMarketMetrics(latest, marketMetrics);
 
   return {
     stock: {
@@ -441,21 +510,22 @@ export async function getKRStockData(code, env, corpCodeHint = "", nameHint = ""
       market: "KR",
       marketLabel: "국내 주식",
       industry: "OpenDART 상장사",
-      description: "OpenDART 공시 기반 실데이터 조회",
+      description: "OpenDART 공시 + 네이버 증권 시세 기반 실데이터 조회",
       metrics: latest.metrics,
       metricDefinitions,
     },
     history,
-    summaryNote: summarizeKr(history),
+    summaryNote: summarizeKr(history, marketMetrics),
     notes: [
       "국내 주식 검색은 최근 OpenDART 공시에서 검색어와 일치하는 종목만 찾아 호출 수를 줄였습니다.",
-      "PER, PBR, ROE, 영업이익률, 부채비율, 배당수익률은 OpenDART 주요 지표 응답을 사용했습니다.",
-      "ROIC는 OpenDART 재무제표 계정값으로 근사 계산했습니다.",
+      "ROE·ROIC·영업이익률·부채비율은 OpenDART 재무지표와 재무제표를 기준으로 계산합니다.",
+      "PER·PBR·배당수익률은 최신 시장가격이 필요하므로 네이버 증권 시세 응답으로 보완합니다.",
     ],
     sources: [
       { label: "OpenDART Disclosure Search", url: "https://opendart.fss.or.kr/guide/main.do?apiGrpCd=DS002" },
       { label: "OpenDART Single Company Indicators", url: "https://opendart.fss.or.kr/guide/detail.do?apiGrpCd=DS003&apiId=2022001" },
       { label: "OpenDART Financial Statements", url: "https://opendart.fss.or.kr/guide/detail.do?apiGrpCd=DS003&apiId=2019017" },
+      { label: "Naver Mobile Stock", url: `https://m.stock.naver.com/domestic/stock/${corp.code}/total` },
     ],
   };
 }
