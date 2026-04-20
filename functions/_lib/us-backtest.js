@@ -3,11 +3,20 @@ import { round, toNumber } from "./metrics.js";
 
 const HALF_DAY = 12 * 60 * 60 * 1000;
 const FMP_BASE_URL = "https://financialmodelingprep.com/stable";
+const YAHOO_CHART_BASE_URL = "https://query1.finance.yahoo.com/v8/finance/chart";
 
 function fmpHeaders(env) {
   return {
     "user-agent": `Stock Insight PWA ${env.SEC_CONTACT_EMAIL || "admin@example.com"}`,
     accept: "application/json, text/plain, */*",
+  };
+}
+
+function yahooHeaders(env) {
+  return {
+    "user-agent": `Mozilla/5.0 Stock Insight PWA ${env.SEC_CONTACT_EMAIL || "admin@example.com"}`,
+    accept: "application/json, text/plain, */*",
+    "accept-language": "en-US,en;q=0.9",
   };
 }
 
@@ -30,10 +39,9 @@ async function fmpFetch(path, params, env, ttl = HALF_DAY) {
     const text = await response.text();
 
     if (!response.ok) {
-      if (response.status === 403) {
-        throw new Error("FMP 조회 실패: HTTP 403 (API 키가 잘못되었거나 현재 플랜에서 요청이 허용되지 않습니다.)");
-      }
-      throw new Error(`FMP 조회 실패: HTTP ${response.status}`);
+      const error = new Error(`FMP 조회 실패: HTTP ${response.status}`);
+      error.status = response.status;
+      throw error;
     }
 
     if (!text) {
@@ -54,6 +62,55 @@ async function fmpFetch(path, params, env, ttl = HALF_DAY) {
   });
 }
 
+async function yahooChartFetch(symbol, fromDate, toDate, env, ttl = HALF_DAY) {
+  const params = new URLSearchParams({
+    period1: String(Math.floor(new Date(`${fromDate}T00:00:00Z`).getTime() / 1000)),
+    period2: String(Math.floor(new Date(`${toDate}T23:59:59Z`).getTime() / 1000)),
+    interval: "1d",
+    includePrePost: "false",
+    events: "div,splits,capitalGains",
+  });
+  const cacheKey = `yahoo-chart:${symbol}?${params.toString()}`;
+
+  return remember(cacheKey, ttl, async () => {
+    const response = await fetch(`${YAHOO_CHART_BASE_URL}/${encodeURIComponent(symbol)}?${params.toString()}`, {
+      headers: yahooHeaders(env),
+    });
+    const text = await response.text();
+
+    if (!response.ok) {
+      throw new Error(`Yahoo Finance 가격 조회 실패: HTTP ${response.status}`);
+    }
+
+    if (!text) {
+      throw new Error(`Yahoo Finance 응답 본문이 비어 있습니다. symbol=${symbol}`);
+    }
+
+    const data = JSON.parse(text);
+    const result = data?.chart?.result?.[0];
+    if (!result) {
+      throw new Error(`Yahoo Finance 가격 데이터가 비어 있습니다. symbol=${symbol}`);
+    }
+
+    const timestamps = Array.isArray(result.timestamp) ? result.timestamp : [];
+    const quote = result?.indicators?.quote?.[0] ?? {};
+    const closes = Array.isArray(quote.close) ? quote.close : [];
+    const meta = result.meta ?? {};
+
+    const rows = timestamps
+      .map((timestamp, index) => ({
+        date: new Date(timestamp * 1000).toISOString().slice(0, 10),
+        close: toNumber(closes[index]),
+      }))
+      .filter((row) => row.close != null);
+
+    return {
+      rows,
+      meta,
+    };
+  });
+}
+
 function subtractPeriod(date, years, months) {
   const copy = new Date(date);
   copy.setUTCFullYear(copy.getUTCFullYear() - years);
@@ -70,6 +127,13 @@ function normalizePriceSeries(rawSeries) {
   return sortAscendingByDate(rows).map((row) => ({
     date: row.date,
     close: toNumber(row.close) ?? toNumber(row.adjClose) ?? toNumber(row.price) ?? null,
+  }));
+}
+
+function normalizeYahooSeries(payload) {
+  return sortAscendingByDate(Array.isArray(payload?.rows) ? payload.rows : []).map((row) => ({
+    date: row.date,
+    close: toNumber(row.close),
   }));
 }
 
@@ -263,19 +327,28 @@ function buildStrategyChartSeries(strategyPoints, benchmarkPoints) {
     .filter(Boolean);
 }
 
-async function loadQuoteMeta(code, env) {
-  const [quoteData, profileData] = await Promise.all([
-    fmpFetch("/quote", { symbol: code }, env),
-    fmpFetch("/profile", { symbol: code }, env),
-  ]);
+async function loadMetaAndSeries(symbol, from, to, env) {
+  try {
+    const fmpPriceData = await fmpFetch("/historical-price-eod/full", { symbol, from, to }, env);
+    const fmpSeries = normalizePriceSeries(fmpPriceData);
+    if (fmpSeries.length) {
+      return {
+        series: fmpSeries,
+        meta: null,
+        source: "fmp",
+      };
+    }
+  } catch (error) {
+    if (error.status !== 402 && error.status !== 403) {
+      throw error;
+    }
+  }
 
-  const quote = Array.isArray(quoteData) ? quoteData[0] ?? {} : quoteData ?? {};
-  const profile = Array.isArray(profileData) ? profileData[0] ?? {} : profileData ?? {};
-
+  const yahooData = await yahooChartFetch(symbol, from, to, env);
   return {
-    code,
-    name: profile.companyName || quote.name || code,
-    assetType: String(profile.isEtf || "").toLowerCase() === "true" ? "ETF" : undefined,
+    series: normalizeYahooSeries(yahooData),
+    meta: yahooData.meta,
+    source: "yahoo",
   };
 }
 
@@ -298,20 +371,14 @@ export async function getUSBacktestDataAny(code, env, years = 0, months = 0, str
   const to = today.toISOString().slice(0, 10);
   const extendedFrom = historyPaddingDate.toISOString().slice(0, 10);
 
-  const requests = [
-    fmpFetch("/historical-price-eod/full", { symbol: code, from: extendedFrom, to }, env),
-    fmpFetch("/historical-price-eod/full", { symbol: "^IXIC", from: extendedFrom, to }, env),
-    loadQuoteMeta(code, env),
-  ];
+  const stockPromise = loadMetaAndSeries(code, extendedFrom, to, env);
+  const benchmarkPromise = loadMetaAndSeries("^IXIC", extendedFrom, to, env);
+  const vixPromise = normalizedStrategy === "vix" ? loadMetaAndSeries("^VIX", extendedFrom, to, env) : Promise.resolve({ series: [] });
 
-  if (normalizedStrategy === "vix") {
-    requests.push(fmpFetch("/historical-price-eod/full", { symbol: "^VIX", from: extendedFrom, to }, env));
-  }
-
-  const [stockPriceData, benchmarkPriceData, meta, vixPriceData] = await Promise.all(requests);
-  const stockSeries = normalizePriceSeries(stockPriceData);
-  const benchmarkSeries = normalizePriceSeries(benchmarkPriceData);
-  const vixSeries = normalizePriceSeries(vixPriceData);
+  const [stockPayload, benchmarkPayload, vixPayload] = await Promise.all([stockPromise, benchmarkPromise, vixPromise]);
+  const stockSeries = stockPayload.series;
+  const benchmarkSeries = benchmarkPayload.series;
+  const vixSeries = vixPayload.series;
 
   const stockStart = findClosestPriceOnOrAfter(stockSeries, from);
   const stockEnd = findClosestPriceOnOrBefore(stockSeries, to);
@@ -339,8 +406,8 @@ export async function getUSBacktestDataAny(code, env, years = 0, months = 0, str
   return {
     stock: {
       code,
-      name: meta.name,
-      assetType: meta.assetType,
+      name: stockPayload.meta?.longName || stockPayload.meta?.shortName || code,
+      assetType: stockPayload.meta?.instrumentType === "ETF" ? "ETF" : undefined,
     },
     period: {
       years: normalizedYears,
@@ -353,7 +420,7 @@ export async function getUSBacktestDataAny(code, env, years = 0, months = 0, str
       benchmark: {
         ...summary.benchmark,
         code: "^IXIC",
-        name: "NASDAQ Composite",
+        name: benchmarkPayload.meta?.longName || "NASDAQ Composite",
       },
       excessCagr: summary.excessCagr,
       excessReturn: summary.excessReturn,
@@ -370,7 +437,7 @@ export async function getUSBacktestDataAny(code, env, years = 0, months = 0, str
         : "공포지수 전략은 전일 VIX가 30 이상이면 매수 상태로 전환하고, 20 이하이면 매도 상태로 전환하는 단순 리스크 오프 방식입니다.",
       "비교 기준은 같은 기간의 NASDAQ Composite (^IXIC) 단순 보유 성과입니다.",
       "누적수익률은 시작 시점 100 기준 총수익률이며 CAGR은 해당 기간의 연복리 수익률입니다.",
-      "이 백테스트는 ETF도 가능하며, 일반주식 마스터 목록 포함 여부가 아니라 실제 가격 데이터 존재 여부로 판단합니다.",
+      `가격 데이터 소스: ${stockPayload.source === "yahoo" ? "Yahoo Finance fallback" : "FMP"} / benchmark ${benchmarkPayload.source === "yahoo" ? "Yahoo Finance fallback" : "FMP"}`,
     ],
   };
 }
