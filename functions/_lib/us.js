@@ -5,7 +5,26 @@ const ONE_DAY = 24 * 60 * 60 * 1000;
 const HALF_DAY = 12 * 60 * 60 * 1000;
 const SEC_TICKERS_URL = "https://www.sec.gov/files/company_tickers_exchange.json";
 const FMP_BASE_URL = "https://financialmodelingprep.com/stable";
+const YAHOO_QUOTE_SUMMARY_URL = "https://query1.finance.yahoo.com/v10/finance/quoteSummary";
 const ETF_LIST_TTL = 6 * 60 * 60 * 1000;
+const POPULAR_ETF_FALLBACK = [
+  ["QQQ", "Invesco QQQ Trust", "NASDAQ"],
+  ["SPY", "SPDR S&P 500 ETF Trust", "NYSE ARCA"],
+  ["VOO", "Vanguard S&P 500 ETF", "NYSE ARCA"],
+  ["IVV", "iShares Core S&P 500 ETF", "NYSE ARCA"],
+  ["DIA", "SPDR Dow Jones Industrial Average ETF Trust", "NYSE ARCA"],
+  ["IWM", "iShares Russell 2000 ETF", "NYSE ARCA"],
+  ["VTI", "Vanguard Total Stock Market ETF", "NYSE ARCA"],
+  ["SOXL", "Direxion Daily Semiconductor Bull 3X Shares", "NYSE ARCA"],
+  ["SOXS", "Direxion Daily Semiconductor Bear 3X Shares", "NYSE ARCA"],
+  ["TQQQ", "ProShares UltraPro QQQ", "NASDAQ"],
+  ["SQQQ", "ProShares UltraPro Short QQQ", "NASDAQ"],
+  ["UPRO", "ProShares UltraPro S&P500", "NYSE ARCA"],
+  ["SPXL", "Direxion Daily S&P 500 Bull 3X Shares", "NYSE ARCA"],
+  ["SPXS", "Direxion Daily S&P 500 Bear 3X Shares", "NYSE ARCA"],
+  ["TECL", "Direxion Daily Technology Bull 3X Shares", "NYSE ARCA"],
+  ["TECS", "Direxion Daily Technology Bear 3X Shares", "NYSE ARCA"],
+];
 
 function secHeaders(env) {
   const contact = env.SEC_CONTACT_EMAIL || "admin@example.com";
@@ -19,6 +38,14 @@ function fmpHeaders(env) {
   return {
     "user-agent": `Stock Insight PWA ${env.SEC_CONTACT_EMAIL || "admin@example.com"}`,
     accept: "application/json, text/plain, */*",
+  };
+}
+
+function yahooHeaders(env) {
+  return {
+    "user-agent": `Mozilla/5.0 Stock Insight PWA ${env.SEC_CONTACT_EMAIL || "admin@example.com"}`,
+    accept: "application/json, text/plain, */*",
+    "accept-language": "en-US,en;q=0.9",
   };
 }
 
@@ -39,6 +66,108 @@ function emptyMetrics() {
     debtRatio: null,
     dividendYield: null,
   };
+}
+
+function emptyEtfMetrics() {
+  return {
+    expenseRatio: null,
+    dividendYield: null,
+    assetsUnderManagement: null,
+    nav: null,
+  };
+}
+
+function formatCompactCurrency(value) {
+  if (value == null || !Number.isFinite(value)) return null;
+  if (Math.abs(value) >= 1_000_000_000) return `$${round(value / 1_000_000_000, 2)}B`;
+  if (Math.abs(value) >= 1_000_000) return `$${round(value / 1_000_000, 2)}M`;
+  if (Math.abs(value) >= 1_000) return `$${round(value / 1_000, 2)}K`;
+  return `$${round(value, 2)}`;
+}
+
+function getRawNumber(node) {
+  if (node == null) return null;
+  if (typeof node === "number") return node;
+  if (typeof node === "string") return toNumber(node);
+  if (typeof node === "object") return toNumber(node.raw) ?? toNumber(node.fmt) ?? null;
+  return null;
+}
+
+function normalizeEtfInfoRow(row) {
+  if (!row || typeof row !== "object") return {};
+  return {
+    expenseRatio:
+      toNumber(row.expenseRatio) ??
+      toNumber(row.totalExpenseRatio) ??
+      toNumber(row.netExpenseRatio) ??
+      null,
+    assetsUnderManagement:
+      toNumber(row.aum) ??
+      toNumber(row.assetsUnderManagement) ??
+      toNumber(row.totalAssets) ??
+      toNumber(row.netAssets) ??
+      null,
+    nav: toNumber(row.nav) ?? toNumber(row.navPrice) ?? null,
+    dividendYield:
+      toNumber(row.dividendYield) ??
+      toNumber(row.yield) ??
+      toNumber(row.trailingDividendYield) ??
+      null,
+  };
+}
+
+function buildEtfDetailCards(info, quote) {
+  const latestPrice = toNumber(quote.price);
+  return [
+    {
+      label: "운용보수",
+      value: info.expenseRatio != null ? `${round(info.expenseRatio, 2)}%` : "-",
+      description: "총보수 또는 순보수 기준입니다.",
+    },
+    {
+      label: "배당수익률",
+      value: info.dividendYield != null ? `${round(info.dividendYield, 2)}%` : "-",
+      description: "최근 제공 데이터 기준입니다.",
+    },
+    {
+      label: "순자산",
+      value: formatCompactCurrency(info.assetsUnderManagement) ?? "-",
+      description: "AUM 또는 순자산 규모입니다.",
+    },
+    {
+      label: "NAV",
+      value: info.nav != null ? `$${round(info.nav, 2)}` : latestPrice != null ? `$${round(latestPrice, 2)}` : "-",
+      description: "제공 NAV가 없으면 최신 가격을 대체 표시합니다.",
+    },
+  ];
+}
+
+function normalizeEtfHoldings(rows) {
+  return (Array.isArray(rows) ? rows : [])
+    .map((row) => ({
+      name: row.asset || row.name || row.holding || row.symbol || "",
+      symbol: row.symbol || "",
+      weight:
+        toNumber(row.weightPercentage) ??
+        toNumber(row.weight) ??
+        toNumber(row.percentage) ??
+        toNumber(row.percentAssets) ??
+        null,
+    }))
+    .filter((row) => row.name)
+    .sort((a, b) => (b.weight ?? -1) - (a.weight ?? -1))
+    .slice(0, 10);
+}
+
+function normalizeEtfSectorWeights(rows) {
+  return (Array.isArray(rows) ? rows : [])
+    .map((row) => ({
+      name: row.sector || row.name || "",
+      weight: toNumber(row.weightPercentage) ?? toNumber(row.weight) ?? toNumber(row.percentage) ?? null,
+    }))
+    .filter((row) => row.name)
+    .sort((a, b) => (b.weight ?? -1) - (a.weight ?? -1))
+    .slice(0, 8);
 }
 
 function mapSearchRow(row) {
@@ -114,11 +243,20 @@ async function loadUSTickers(env) {
 }
 
 async function loadUSEtfList(env) {
-  if (!env.FMP_API_KEY) return [];
+  const fallbackItems = POPULAR_ETF_FALLBACK.map(([code, name, exchange]) => ({
+    code,
+    name,
+    market: "US",
+    marketLabel: "미국 주식",
+    exchange,
+    assetType: "ETF",
+  }));
+
+  if (!env.FMP_API_KEY) return fallbackItems;
 
   return remember("us-etf-list", ETF_LIST_TTL, async () => {
     const rows = await fmpFetch("/etf-list", {}, env, ETF_LIST_TTL).catch(() => []);
-    return (Array.isArray(rows) ? rows : [])
+    const fetchedItems = (Array.isArray(rows) ? rows : [])
       .map((row) => ({
         code: String(row.symbol || "").trim().toUpperCase(),
         name: String(row.name || "").trim(),
@@ -128,6 +266,8 @@ async function loadUSEtfList(env) {
         assetType: "ETF",
       }))
       .filter((item) => item.code && item.name);
+
+    return mergeSearchItems([...fallbackItems, ...fetchedItems]);
   });
 }
 
@@ -231,6 +371,82 @@ async function fmpFetch(path, params, env, ttl = HALF_DAY) {
 
     return data;
   });
+}
+
+async function yahooQuoteSummaryFetch(symbol, env, ttl = HALF_DAY) {
+  const params = new URLSearchParams({
+    modules: "price,summaryDetail,financialData,defaultKeyStatistics,assetProfile",
+  });
+  const cacheKey = `yahoo:quote-summary:${symbol}?${params.toString()}`;
+
+  return remember(cacheKey, ttl, async () => {
+    const response = await fetch(`${YAHOO_QUOTE_SUMMARY_URL}/${encodeURIComponent(symbol)}?${params.toString()}`, {
+      headers: yahooHeaders(env),
+    });
+    const text = await response.text();
+
+    if (!response.ok) {
+      throw new Error(`Yahoo Finance 핵심지표 조회 실패: HTTP ${response.status}`);
+    }
+    if (!text) {
+      throw new Error(`Yahoo Finance 핵심지표 응답이 비어 있습니다. symbol=${symbol}`);
+    }
+
+    const data = JSON.parse(text);
+    const result = data?.quoteSummary?.result?.[0];
+    if (!result) {
+      throw new Error(`Yahoo Finance 핵심지표 데이터가 비어 있습니다. symbol=${symbol}`);
+    }
+
+    return result;
+  });
+}
+
+function buildYahooStockFallback(summary, selectedMeta) {
+  const price = summary?.price ?? {};
+  const summaryDetail = summary?.summaryDetail ?? {};
+  const financialData = summary?.financialData ?? {};
+  const defaultKeyStatistics = summary?.defaultKeyStatistics ?? {};
+  const assetProfile = summary?.assetProfile ?? {};
+
+  const latestPrice = getRawNumber(price.regularMarketPrice);
+  const latestMetrics = {
+    per: round(getRawNumber(summaryDetail.trailingPE)),
+    pbr: round(getRawNumber(defaultKeyStatistics.priceToBook) ?? getRawNumber(summaryDetail.priceToBook)),
+    roe: round(getRawNumber(financialData.returnOnEquity) != null ? getRawNumber(financialData.returnOnEquity) * 100 : null),
+    roic: null,
+    operatingMargin:
+      round(getRawNumber(financialData.operatingMargins) != null ? getRawNumber(financialData.operatingMargins) * 100 : null),
+    debtRatio: round(getRawNumber(financialData.debtToEquity)),
+    dividendYield:
+      round(getRawNumber(summaryDetail.dividendYield) != null ? getRawNumber(summaryDetail.dividendYield) * 100 : null),
+  };
+
+  return {
+    stock: {
+      code: selectedMeta.code,
+      name: selectedMeta.name,
+      market: "US",
+      marketLabel: "미국 주식",
+      industry: assetProfile.industry || selectedMeta.exchange,
+      assetType: "Stock",
+      description: `${selectedMeta.exchange} 상장 · 최신 가격 ${latestPrice != null ? `$${latestPrice.toFixed(2)}` : "조회 불가"}`,
+      metrics: latestMetrics,
+      metricDefinitions,
+    },
+    history: [],
+    summaryNote:
+      "FMP 분기 재무 호출이 제한되어 Yahoo Finance 핵심지표 fallback으로 현재 수치 중심 분석을 표시합니다.",
+    notes: [
+      "현재 응답은 Yahoo Finance의 현재 핵심지표 fallback입니다.",
+      "ROIC와 최근 1년 분기 흐름은 분기 재무 원천이 제한될 때 비어 있을 수 있습니다.",
+      "FMP 호출 제한이 해소되면 분기 히스토리와 함께 더 상세한 계산값으로 다시 표시됩니다.",
+    ],
+    sources: [
+      { label: "Yahoo Finance Quote Summary", url: `https://finance.yahoo.com/quote/${encodeURIComponent(selectedMeta.code)}` },
+      { label: "SEC Company Tickers Exchange", url: "https://www.sec.gov/file/company-tickers-exchange" },
+    ],
+  };
 }
 
 function parseQuarterDateLabel(dateString) {
@@ -339,15 +555,24 @@ function summarizeUS(history) {
 }
 
 async function getUSEtfData(code, env, stockMeta = null) {
-  const [quoteResult, profileResult] = await Promise.allSettled([
+  const [quoteResult, profileResult, infoResult, holdingsResult, sectorResult] = await Promise.allSettled([
     fmpFetch("/quote", { symbol: code }, env),
     fmpFetch("/profile", { symbol: code }, env),
+    fmpFetch("/etf/info", { symbol: code }, env),
+    fmpFetch("/etf/holdings", { symbol: code }, env),
+    fmpFetch("/etf/sector-weightings", { symbol: code }, env),
   ]);
 
   const quoteData = quoteResult.status === "fulfilled" ? quoteResult.value : [];
   const profileData = profileResult.status === "fulfilled" ? profileResult.value : [];
+  const infoData = infoResult.status === "fulfilled" ? infoResult.value : [];
+  const holdingsData = holdingsResult.status === "fulfilled" ? holdingsResult.value : [];
+  const sectorData = sectorResult.status === "fulfilled" ? sectorResult.value : [];
   const quote = Array.isArray(quoteData) ? quoteData[0] ?? {} : quoteData ?? {};
   const profile = Array.isArray(profileData) ? profileData[0] ?? {} : profileData ?? {};
+  const info = normalizeEtfInfoRow(Array.isArray(infoData) ? infoData[0] ?? {} : infoData ?? {});
+  const holdings = normalizeEtfHoldings(holdingsData);
+  const sectorWeights = normalizeEtfSectorWeights(sectorData);
   const latestPrice = toNumber(quote.price);
   const category = profile.industry || profile.sector || "ETF";
   const provider = profile.companyName || stockMeta?.name || null;
@@ -361,8 +586,11 @@ async function getUSEtfData(code, env, stockMeta = null) {
       industry: category,
       assetType: "ETF",
       description: `${category}${provider ? ` · ${provider}` : ""}${latestPrice != null ? ` · 최신 가격 $${latestPrice.toFixed(2)}` : ""}`,
-      metrics: emptyMetrics(),
+      metrics: emptyEtfMetrics(),
       metricDefinitions,
+      etfDetails: buildEtfDetailCards(info, quote),
+      holdings,
+      sectorWeights,
     },
     history: [],
     summaryNote:
@@ -383,7 +611,9 @@ async function getUSEtfData(code, env, stockMeta = null) {
 
 export async function getUSStockData(code, env, selectedName = "") {
   const tickers = await loadUSTickers(env);
+  const etfList = await loadUSEtfList(env).catch(() => []);
   const stockMeta = tickers.find((item) => item.code === code);
+  const etfMeta = etfList.find((item) => item.code === code);
   const fallbackMeta = stockMeta || { code, name: selectedName || code, exchange: "ETF" };
   const selectedMeta = stockMeta || fallbackMeta;
 
@@ -431,8 +661,32 @@ export async function getUSStockData(code, env, selectedName = "") {
   );
 
   const quarterlyReports = incomeReports.filter((report) => balanceByDate.has(report.date)).slice(0, 4);
+  const profileSuggestsEtf =
+    String(profile.industry || "").toLowerCase().includes("etf") ||
+    String(profile.sector || "").toLowerCase().includes("etf") ||
+    String(profile.companyName || "").toLowerCase().includes(" etf");
+  const isKnownEtf = Boolean(etfMeta || profileSuggestsEtf);
+
+  if (!quarterlyReports.length && isKnownEtf) {
+    return getUSEtfData(code, env, etfMeta || fallbackMeta);
+  }
+
+  const hasRateLimit =
+    [profileResult, quoteResult, priceResult, incomeResult, balanceResult, dividendResult].some(
+      (result) => result.status === "rejected" && result.reason?.message?.includes("HTTP 429"),
+    );
+
+  if (!quarterlyReports.length && hasRateLimit) {
+    const yahooSummary = await yahooQuoteSummaryFetch(code, env);
+    return buildYahooStockFallback(yahooSummary, {
+      code: selectedMeta.code,
+      name: selectedName || selectedMeta.name || code,
+      exchange: selectedMeta.exchange || "미국 주식",
+    });
+  }
+
   if (!quarterlyReports.length) {
-    return getUSEtfData(code, env, fallbackMeta);
+    throw new Error("분기 재무 데이터를 받지 못했습니다. 잠시 후 다시 시도해주세요.");
   }
 
   if (!quoteData.length && !profileData.length && !priceHistory.length) {
