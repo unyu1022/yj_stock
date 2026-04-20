@@ -1,4 +1,5 @@
 import { badRequest, json, serverError } from "../_lib/http.js";
+import { getUsdKrwRate } from "../_lib/fx.js";
 import { getKRStockData } from "../_lib/kr.js";
 import { getUSEtfData } from "../_lib/us-etf.js";
 import { getUSStockData } from "../_lib/us.js";
@@ -27,7 +28,8 @@ export async function onRequestGet(context) {
           ? await getUSEtfData(code, context.env, name)
           : await getUSStockData(code, context.env, name);
 
-    return json({ ok: true, ...payload });
+    const fx = market === "US" ? await getUsdKrwRate().catch(() => null) : null;
+    return json({ ok: true, ...payload, fx });
   } catch (error) {
     return serverError(error.message);
   }
