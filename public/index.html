@@ -33,13 +33,18 @@
           </div>
 
           <label class="field-label" for="stock-search">종목 검색</label>
-          <input
-            id="stock-search"
-            class="search-input"
-            type="search"
-            placeholder="예: Apple, AAPL, Microsoft, MSFT"
-            autocomplete="off"
-          />
+          <div class="search-input-wrap">
+            <input
+              id="stock-search"
+              class="search-input has-inline-clear"
+              type="search"
+              placeholder="예: Apple, AAPL, Microsoft, MSFT"
+              autocomplete="off"
+            />
+            <button id="clear-search" class="search-clear-button" type="button" aria-label="검색어 지우기" hidden>
+              ×
+            </button>
+          </div>
           <div id="search-results" class="search-results" role="listbox" aria-label="종목 검색 결과"></div>
           <div id="selection-summary" class="selection-summary"></div>
         </section>
