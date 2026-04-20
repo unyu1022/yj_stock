@@ -5,6 +5,7 @@ const HALF_DAY = 12 * 60 * 60 * 1000;
 const FMP_BASE_URL = "https://financialmodelingprep.com/stable";
 const YAHOO_FINANCE_QUOTE_URL = "https://finance.yahoo.com/quote";
 const STOCKANALYSIS_ETF_URL = "https://stockanalysis.com/etf";
+const ALPHA_VANTAGE_URL = "https://www.alphavantage.co/query";
 
 function fmpHeaders(env) {
   return {
@@ -26,6 +27,10 @@ function ensureFmpKey(env) {
     throw new Error("FMP_API_KEY is required for US stock and ETF lookups.");
   }
   return env.FMP_API_KEY;
+}
+
+function ensureAlphaVantageKey(env) {
+  return env.ALPHA_VANTAGE_API_KEY || null;
 }
 
 async function fmpFetch(path, params, env, ttl = HALF_DAY) {
@@ -59,6 +64,45 @@ async function fmpFetch(path, params, env, ttl = HALF_DAY) {
     if (data?.["Error Message"]) throw new Error(data["Error Message"]);
     if (data?.error) throw new Error(typeof data.error === "string" ? data.error : data.error.message || `FMP error: ${path}`);
     if (data?.Error) throw new Error(data.Error);
+    return data;
+  });
+}
+
+async function alphaVantageFetch(params, env, ttl = HALF_DAY) {
+  const key = ensureAlphaVantageKey(env);
+  if (!key) {
+    throw new Error("ALPHA_VANTAGE_API_KEY is required for Alpha Vantage ETF fallback.");
+  }
+
+  const cacheKey = `alphavantage:${new URLSearchParams(params).toString()}`;
+  return remember(cacheKey, ttl, async () => {
+    const query = new URLSearchParams({ ...params, apikey: key });
+    const response = await fetch(`${ALPHA_VANTAGE_URL}?${query.toString()}`, {
+      headers: {
+        accept: "application/json, text/plain, */*",
+        "user-agent": `Stock Insight PWA ${env.SEC_CONTACT_EMAIL || "admin@example.com"}`,
+      },
+    });
+    const text = await response.text();
+
+    if (!response.ok) {
+      throw new Error(`Alpha Vantage request failed: HTTP ${response.status}`);
+    }
+
+    if (!text) {
+      throw new Error("Alpha Vantage response body is empty.");
+    }
+
+    let data;
+    try {
+      data = JSON.parse(text);
+    } catch {
+      throw new Error("Alpha Vantage JSON parse failed.");
+    }
+
+    if (data?.Information) throw new Error(data.Information);
+    if (data?.Note) throw new Error(data.Note);
+    if (data?.["Error Message"]) throw new Error(data["Error Message"]);
     return data;
   });
 }
@@ -237,6 +281,71 @@ function normalizeFmpSectorWeights(rows) {
     .filter((row) => row.name)
     .sort((a, b) => (b.weight ?? -1) - (a.weight ?? -1))
     .slice(0, 8);
+}
+
+function getFirstObjectValue(object, keys) {
+  for (const key of keys) {
+    if (object?.[key] != null && object[key] !== "") return object[key];
+  }
+  return null;
+}
+
+function normalizeAlphaVantageEtfProfile(data) {
+  if (!data || typeof data !== "object") return { info: {}, holdings: [], sectorWeights: [] };
+
+  const info = {
+    expenseRatio:
+      toNumber(getFirstObjectValue(data, ["expense_ratio", "net_expense_ratio", "expenseRatio", "netExpenseRatio"])) ??
+      null,
+    expenseRatioLabel: getFirstObjectValue(data, ["expense_ratio", "net_expense_ratio", "expenseRatio", "netExpenseRatio"]),
+    assetsUnderManagement:
+      toNumber(getFirstObjectValue(data, ["net_assets", "aum", "assets", "netAssets", "total_net_assets"])) ?? null,
+    assetsUnderManagementLabel: getFirstObjectValue(data, ["net_assets", "aum", "assets", "netAssets", "total_net_assets"]),
+    dividendYield:
+      toNumber(getFirstObjectValue(data, ["dividend_yield", "yield", "dividendYield", "distribution_yield"])) ?? null,
+    dividendYieldLabel: getFirstObjectValue(data, ["dividend_yield", "yield", "dividendYield", "distribution_yield"]),
+    family: getFirstObjectValue(data, ["fund_family", "issuer", "fundFamily", "issuerName"]),
+    categoryName: getFirstObjectValue(data, ["asset_class", "category", "assetClass", "fund_category"]),
+    legalType: "ETF",
+    longName: getFirstObjectValue(data, ["name", "fund_name", "fundName"]),
+  };
+
+  const rawHoldings = Array.isArray(data.holdings)
+    ? data.holdings
+    : Array.isArray(data.top_holdings)
+      ? data.top_holdings
+      : Array.isArray(data.constituents)
+        ? data.constituents
+        : [];
+
+  const holdings = rawHoldings
+    .map((row) => ({
+      name: getFirstObjectValue(row, ["name", "holding", "asset", "symbol"]) || "",
+      symbol: getFirstObjectValue(row, ["symbol", "ticker"]) || "",
+      weight:
+        toNumber(getFirstObjectValue(row, ["weight", "weight_percent", "percentage", "allocation"])) ?? null,
+    }))
+    .filter((row) => row.name)
+    .sort((a, b) => (b.weight ?? -1) - (a.weight ?? -1))
+    .slice(0, 10);
+
+  const rawSectorWeights = Array.isArray(data.sector_weights)
+    ? data.sector_weights
+    : Array.isArray(data.sectors)
+      ? data.sectors
+      : [];
+
+  const sectorWeights = rawSectorWeights
+    .map((row) => ({
+      name: getFirstObjectValue(row, ["sector", "name"]) || "",
+      weight:
+        toNumber(getFirstObjectValue(row, ["weight", "weight_percent", "percentage", "allocation"])) ?? null,
+    }))
+    .filter((row) => row.name)
+    .sort((a, b) => (b.weight ?? -1) - (a.weight ?? -1))
+    .slice(0, 8);
+
+  return { info, holdings, sectorWeights };
 }
 
 function extractYahooEmbeddedSummary(html, code) {
@@ -683,6 +792,15 @@ function buildSourceList(code) {
 }
 
 export async function getUSEtfData(code, env, selectedName = "") {
+  let alphaVantageData = null;
+  try {
+    alphaVantageData = normalizeAlphaVantageEtfProfile(
+      await alphaVantageFetch({ function: "ETF_PROFILE", symbol: code }, env),
+    );
+  } catch {
+    alphaVantageData = null;
+  }
+
   let stockAnalysisData = null;
   try {
     stockAnalysisData = await fetchStockAnalysisEtfData(code, env);
@@ -714,6 +832,7 @@ export async function getUSEtfData(code, env, selectedName = "") {
   const quote = Array.isArray(quoteData) ? quoteData[0] ?? {} : quoteData ?? {};
   const profile = Array.isArray(profileData) ? profileData[0] ?? {} : profileData ?? {};
   const fmpInfo = normalizeFmpInfoRow(Array.isArray(infoData) ? infoData[0] ?? {} : infoData ?? {});
+  const alphaInfo = alphaVantageData?.info ?? {};
   const yahooInfo = yahooData?.info ?? {};
   const stockAnalysisInfo = stockAnalysisData?.info ?? {};
 
@@ -721,26 +840,33 @@ export async function getUSEtfData(code, env, selectedName = "") {
   const quotePriceLabel = quotePrice != null ? `$${round(quotePrice, 2)}` : null;
   const latestPrice = firstDefined(quotePrice, fmpInfo.latestPrice, stockAnalysisInfo.latestPrice, yahooInfo.latestPrice, yahooInfo.nav);
   const mergedInfo = {
-    expenseRatio: firstDefined(stockAnalysisInfo.expenseRatio, yahooInfo.expenseRatio, fmpInfo.expenseRatio),
-    expenseRatioLabel: firstDefined(stockAnalysisInfo.expenseRatioLabel, yahooInfo.expenseRatioLabel),
-    dividendYield: firstDefined(stockAnalysisInfo.dividendYield, yahooInfo.dividendYield, fmpInfo.dividendYield),
-    dividendYieldLabel: firstDefined(stockAnalysisInfo.dividendYieldLabel, yahooInfo.dividendYieldLabel),
-    assetsUnderManagement: firstDefined(stockAnalysisInfo.assetsUnderManagement, yahooInfo.assetsUnderManagement, fmpInfo.assetsUnderManagement),
-    assetsUnderManagementLabel: firstDefined(stockAnalysisInfo.assetsUnderManagementLabel, yahooInfo.assetsUnderManagementLabel),
+    expenseRatio: firstDefined(stockAnalysisInfo.expenseRatio, alphaInfo.expenseRatio, yahooInfo.expenseRatio, fmpInfo.expenseRatio),
+    expenseRatioLabel: firstDefined(stockAnalysisInfo.expenseRatioLabel, alphaInfo.expenseRatioLabel, yahooInfo.expenseRatioLabel),
+    dividendYield: firstDefined(stockAnalysisInfo.dividendYield, alphaInfo.dividendYield, yahooInfo.dividendYield, fmpInfo.dividendYield),
+    dividendYieldLabel: firstDefined(stockAnalysisInfo.dividendYieldLabel, alphaInfo.dividendYieldLabel, yahooInfo.dividendYieldLabel),
+    assetsUnderManagement: firstDefined(stockAnalysisInfo.assetsUnderManagement, alphaInfo.assetsUnderManagement, yahooInfo.assetsUnderManagement, fmpInfo.assetsUnderManagement),
+    assetsUnderManagementLabel: firstDefined(stockAnalysisInfo.assetsUnderManagementLabel, alphaInfo.assetsUnderManagementLabel, yahooInfo.assetsUnderManagementLabel),
     nav: firstDefined(fmpInfo.nav, stockAnalysisInfo.nav, yahooInfo.nav, latestPrice),
     navLabel: firstDefined(quotePriceLabel, stockAnalysisInfo.navLabel, yahooInfo.navLabel),
     latestPrice,
     latestPriceLabel: firstDefined(quotePriceLabel, stockAnalysisInfo.latestPriceLabel, yahooInfo.latestPriceLabel),
   };
 
-  const holdings = stockAnalysisData?.holdings?.length
+  const holdings = alphaVantageData?.holdings?.length
+    ? alphaVantageData.holdings
+    : stockAnalysisData?.holdings?.length
     ? stockAnalysisData.holdings
     : yahooData?.holdings?.length
       ? yahooData.holdings
       : normalizeFmpHoldings(holdingsData);
-  const sectorWeights = yahooData?.sectorWeights?.length ? yahooData.sectorWeights : normalizeFmpSectorWeights(sectorData);
+  const sectorWeights = alphaVantageData?.sectorWeights?.length
+    ? alphaVantageData.sectorWeights
+    : yahooData?.sectorWeights?.length
+      ? yahooData.sectorWeights
+      : normalizeFmpSectorWeights(sectorData);
   const category = firstDefined(
     stockAnalysisInfo.categoryName,
+    alphaInfo.categoryName,
     yahooData?.summary?.fundProfile?.categoryName,
     yahooInfo.categoryName,
     yahooData?.summary?.fundProfile?.legalType,
@@ -751,12 +877,14 @@ export async function getUSEtfData(code, env, selectedName = "") {
   );
   const provider = firstDefined(
     stockAnalysisInfo.family,
+    alphaInfo.family,
     yahooData?.summary?.fundProfile?.family,
     yahooInfo.family,
     profile.companyName,
   );
   const displayName = firstDefined(
     selectedName,
+    alphaInfo.longName,
     yahooData?.summary?.price?.longName,
     stockAnalysisInfo.longName,
     yahooInfo.longName,
