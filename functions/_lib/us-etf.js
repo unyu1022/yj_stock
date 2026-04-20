@@ -2,6 +2,7 @@ import { remember } from "./cache.js";
 import { round, toNumber } from "./metrics.js";
 
 const HALF_DAY = 12 * 60 * 60 * 1000;
+const QUOTE_TTL = 5 * 60 * 1000;
 const FMP_BASE_URL = "https://financialmodelingprep.com/stable";
 const YAHOO_FINANCE_QUOTE_URL = "https://finance.yahoo.com/quote";
 const STOCKANALYSIS_ETF_URL = "https://stockanalysis.com/etf";
@@ -992,7 +993,7 @@ export async function getUSEtfData(code, env, selectedName = "") {
   }
 
   const [quoteResult, profileResult, infoResult, holdingsResult, sectorResult] = await Promise.allSettled([
-    fmpFetch("/quote", { symbol: code }, env),
+    fmpFetch("/quote", { symbol: code }, env, QUOTE_TTL),
     fmpFetch("/profile", { symbol: code }, env),
     fmpFetch("/etf/info", { symbol: code }, env),
     fmpFetch("/etf/holdings", { symbol: code }, env),
@@ -1016,8 +1017,9 @@ export async function getUSEtfData(code, env, selectedName = "") {
   const stockAnalysisInfo = stockAnalysisData?.info ?? {};
 
   const quotePrice = toNumber(quote.price);
-  const quotePriceLabel = quotePrice != null ? `$${round(quotePrice, 2)}` : null;
-  const latestPrice = firstDefined(quotePrice, fmpInfo.latestPrice, stockAnalysisInfo.latestPrice, yahooInfo.latestPrice, yahooInfo.nav);
+  const yahooPrice = firstDefined(yahooInfo.latestPrice, yahooInfo.nav);
+  const latestPrice = firstDefined(yahooPrice, quotePrice, fmpInfo.latestPrice, stockAnalysisInfo.latestPrice);
+  const latestPriceLabel = latestPrice != null ? `$${round(latestPrice, 2)}` : null;
   const mergedInfo = {
     expenseRatio: firstDefined(stockAnalysisInfo.expenseRatio, alphaInfo.expenseRatio, yahooInfo.expenseRatio, fmpInfo.expenseRatio),
     expenseRatioLabel: firstDefined(stockAnalysisInfo.expenseRatioLabel, alphaInfo.expenseRatioLabel, yahooInfo.expenseRatioLabel),
@@ -1026,9 +1028,9 @@ export async function getUSEtfData(code, env, selectedName = "") {
     assetsUnderManagement: firstDefined(stockAnalysisInfo.assetsUnderManagement, alphaInfo.assetsUnderManagement, yahooInfo.assetsUnderManagement, fmpInfo.assetsUnderManagement),
     assetsUnderManagementLabel: firstDefined(stockAnalysisInfo.assetsUnderManagementLabel, alphaInfo.assetsUnderManagementLabel, yahooInfo.assetsUnderManagementLabel),
     nav: firstDefined(fmpInfo.nav, stockAnalysisInfo.nav, yahooInfo.nav, latestPrice),
-    navLabel: firstDefined(quotePriceLabel, stockAnalysisInfo.navLabel, yahooInfo.navLabel),
+    navLabel: firstDefined(latestPriceLabel, stockAnalysisInfo.navLabel, yahooInfo.navLabel),
     latestPrice,
-    latestPriceLabel: firstDefined(quotePriceLabel, stockAnalysisInfo.latestPriceLabel, yahooInfo.latestPriceLabel),
+    latestPriceLabel,
   };
 
   const holdings = alphaVantageData?.holdings?.length
