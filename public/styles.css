@@ -144,6 +144,24 @@ body {
   border: 1px dashed rgba(13, 42, 69, 0.18);
 }
 
+.fx-banner {
+  display: grid;
+  gap: 6px;
+  padding: 16px 18px;
+  border-radius: 18px;
+  background: linear-gradient(135deg, rgba(13, 42, 69, 0.08), rgba(185, 109, 43, 0.08));
+  border: 1px solid var(--line);
+}
+
+.fx-banner strong {
+  font-size: 1rem;
+  color: var(--ink);
+}
+
+.fx-banner small {
+  color: var(--muted);
+}
+
 .tab-screen {
   display: none;
   gap: 18px;
