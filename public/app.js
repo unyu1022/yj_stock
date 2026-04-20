@@ -635,17 +635,51 @@ function renderSearchResults(items, query) {
     return;
   }
 
+  const normalizedQuery = query.trim().toUpperCase();
+  const canDirectLookup = /^[A-Z][A-Z0-9.-]{0,9}$/.test(normalizedQuery);
+  const hasExactMatch = items.some((item) => String(item.code || "").toUpperCase() === normalizedQuery);
+
   if (!items.length) {
     ui.searchResults.innerHTML = `
       <div class="search-result">
         검색 결과가 없습니다.
         <small>검색어를 조금 다르게 입력해보세요.</small>
       </div>
-    `;
+    ` + (canDirectLookup
+      ? `
+      <button
+        class="search-result"
+        type="button"
+        data-code="${normalizedQuery}"
+        data-name="${encodeURIComponent(normalizedQuery)}"
+        data-asset-type=""
+      >
+        <strong>${normalizedQuery} 직접 조회</strong>
+        <small>검색 목록에 없어도 티커로 바로 조회합니다.</small>
+      </button>
+    `
+      : "");
     return;
   }
 
-  ui.searchResults.innerHTML = items
+  const directLookupHtml = canDirectLookup && !hasExactMatch
+    ? `
+        <button
+          class="search-result"
+          type="button"
+          data-code="${normalizedQuery}"
+          data-name="${encodeURIComponent(normalizedQuery)}"
+          data-asset-type=""
+        >
+          <strong>${normalizedQuery} 직접 조회</strong>
+          <small>검색 결과와 별개로 이 티커를 바로 조회합니다.</small>
+        </button>
+      `
+    : "";
+
+  ui.searchResults.innerHTML =
+    directLookupHtml +
+    items
     .map(
       (stock) => `
         <button
