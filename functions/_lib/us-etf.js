@@ -454,31 +454,72 @@ function extractYahooSummaryFromHtml(html) {
 }
 
 function extractJsonStringField(text, key) {
-  const regex = new RegExp(`"${key}":"((?:\\.|[^"\\])*)"`);
-  const match = text.match(regex);
-  if (!match) return null;
-  try {
-    return JSON.parse(`"${match[1]}"`);
-  } catch {
-    return match[1];
+  const marker = `"${key}":"`;
+  const start = text.indexOf(marker);
+  if (start === -1) return null;
+
+  let value = "";
+  let escaped = false;
+  for (let i = start + marker.length; i < text.length; i += 1) {
+    const char = text[i];
+    if (escaped) {
+      value += char;
+      escaped = false;
+      continue;
+    }
+    if (char === "\\") {
+      escaped = true;
+      value += char;
+      continue;
+    }
+    if (char === "\"") {
+      try {
+        return JSON.parse(`"${value}"`);
+      } catch {
+        return value;
+      }
+    }
+    value += char;
   }
+  return null;
 }
 
 function extractJsonNumber(text, key) {
-  const regex = new RegExp(`"${key}":\{"raw":(-?\d+(?:\.\d+)?)`);
+  const regex = new RegExp(`"${key}":\\{"raw":(-?\\d+(?:\\.\\d+)?)`);
   const match = text.match(regex);
   return match ? Number(match[1]) : null;
 }
 
 function extractJsonFmt(text, key) {
-  const regex = new RegExp(`"${key}":\{[^}]*"fmt":"((?:\\.|[^"\\])*)"`);
-  const match = text.match(regex);
-  if (!match) return null;
-  try {
-    return JSON.parse(`"${match[1]}"`);
-  } catch {
-    return match[1];
+  const keyIndex = text.indexOf(`"${key}":{`);
+  if (keyIndex === -1) return null;
+  const fmtIndex = text.indexOf(`"fmt":"`, keyIndex);
+  if (fmtIndex === -1) return null;
+
+  let value = "";
+  let escaped = false;
+  for (let i = fmtIndex + 7; i < text.length; i += 1) {
+    const char = text[i];
+    if (escaped) {
+      value += char;
+      escaped = false;
+      continue;
+    }
+    if (char === "\\") {
+      escaped = true;
+      value += char;
+      continue;
+    }
+    if (char === "\"") {
+      try {
+        return JSON.parse(`"${value}"`);
+      } catch {
+        return value;
+      }
+    }
+    value += char;
   }
+  return null;
 }
 
 function extractArrayBlock(text, key) {
@@ -695,13 +736,92 @@ function extractStockAnalysisHoldings(html) {
   return rows;
 }
 
+function extractStockAnalysisScriptText(html) {
+  const scripts = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)];
+  for (const match of scripts) {
+    const content = match[1] || "";
+    if (content.includes("type:\"etf\"") || content.includes("holdingsTable") || content.includes("allocationChartData")) {
+      return content;
+    }
+  }
+  return "";
+}
+
+function extractStockAnalysisQuotedField(text, key) {
+  const regex = new RegExp(`${key}:"([^"]*)"`);
+  const match = text.match(regex);
+  return match ? match[1] : null;
+}
+
+function extractStockAnalysisNumericField(text, key) {
+  const regex = new RegExp(`${key}:(-?\d+(?:\.\d+)?)`);
+  const match = text.match(regex);
+  return match ? Number(match[1]) : null;
+}
+
+function extractStockAnalysisOverviewData(html) {
+  const scriptText = extractStockAnalysisScriptText(html);
+  if (!scriptText) return null;
+
+  return {
+    assetsLabel: extractStockAnalysisQuotedField(scriptText, "aum"),
+    expenseRatioLabel: extractStockAnalysisQuotedField(scriptText, "expenseRatio"),
+    dividendYieldLabel: extractStockAnalysisQuotedField(scriptText, "dividendYield"),
+    previousCloseLabel: null,
+    openLabel: null,
+    categoryName:
+      extractStockAnalysisQuotedField(scriptText, "category") ||
+      extractStockAnalysisQuotedField(scriptText, "assetClass"),
+    provider: extractStockAnalysisQuotedField(scriptText, "provider"),
+    holdingsCount: extractStockAnalysisNumericField(scriptText, "holdings"),
+    latestPrice: extractStockAnalysisNumericField(scriptText, "p"),
+  };
+}
+
+function extractStockAnalysisHoldingsFromScript(html) {
+  const scriptText = extractStockAnalysisScriptText(html);
+  if (!scriptText) return { holdings: [], sectorWeights: [] };
+
+  const holdings = [];
+  const holdingsBlockMatch = scriptText.match(/holdings:\[(.*?)\],(?:asset_allocation|allocationChartData|sectors:)/s);
+  if (holdingsBlockMatch) {
+    const entryPattern = /n:"([^"]+)"(?:,s:"\$?([^"]+)")?,as:"([^"]+)"/g;
+    for (const match of holdingsBlockMatch[1].matchAll(entryPattern)) {
+      holdings.push({
+        name: match[1],
+        symbol: match[2] || "",
+        weight: parsePercentValue(match[3]),
+      });
+      if (holdings.length >= 10) break;
+    }
+  }
+
+  const sectorWeights = [];
+  const sectorsBlockMatch = scriptText.match(/sectors:\[(.*?)\],countries:/s);
+  if (sectorsBlockMatch) {
+    const sectorPattern = /n:"([^"]+)",w:([0-9.]+)/g;
+    for (const match of sectorsBlockMatch[1].matchAll(sectorPattern)) {
+      sectorWeights.push({
+        name: match[1],
+        weight: toNumber(match[2]),
+      });
+      if (sectorWeights.length >= 8) break;
+    }
+  }
+
+  return { holdings, sectorWeights };
+}
+
 async function fetchStockAnalysisEtfData(code, env) {
   const [overviewHtml, holdingsHtml] = await Promise.all([
     fetchStockAnalysisPage(code, "/", env),
     fetchStockAnalysisPage(code, "/holdings/", env),
   ]);
 
-  const overviewFallback = parseStockAnalysisOverviewFallback(overviewHtml);
+  const overviewFallback = {
+    ...parseStockAnalysisOverviewFallback(overviewHtml),
+    ...extractStockAnalysisOverviewData(overviewHtml),
+  };
   const assetsLabel = extractStockAnalysisCellValue(overviewHtml, "Assets") || overviewFallback.assetsLabel;
   const expenseRatioLabel = extractStockAnalysisCellValue(overviewHtml, "Expense Ratio") || overviewFallback.expenseRatioLabel;
   const dividendYieldLabel = extractStockAnalysisCellValue(overviewHtml, "Dividend Yield") || overviewFallback.dividendYieldLabel;
@@ -717,7 +837,9 @@ async function fetchStockAnalysisEtfData(code, env) {
     overviewFallback.categoryName;
   const provider = extractStockAnalysisCellValue(overviewHtml, "ETF Provider") || overviewFallback.provider;
 
-  const holdings = extractStockAnalysisHoldings(holdingsHtml);
+  const scriptBreakdown = extractStockAnalysisHoldingsFromScript(holdingsHtml);
+  const tableHoldings = extractStockAnalysisHoldings(holdingsHtml);
+  const holdings = tableHoldings.length ? tableHoldings : scriptBreakdown.holdings;
 
   return {
     info: {
@@ -738,7 +860,7 @@ async function fetchStockAnalysisEtfData(code, env) {
       holdingsCount,
     },
     holdings,
-    sectorWeights: [],
+    sectorWeights: scriptBreakdown.sectorWeights,
     summary: null,
   };
 }
