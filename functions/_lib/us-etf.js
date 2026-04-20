@@ -481,6 +481,58 @@ function extractStockAnalysisCellValue(html, label) {
   return match ? stripTags(match[1]) : null;
 }
 
+function extractStockAnalysisTextValue(text, label, nextLabels = []) {
+  const escapedLabel = label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const escapedNext = nextLabels.map((item) => item.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+  const boundary = escapedNext.length ? `(?=${escapedNext.join("|")}|$)` : "$";
+  const regex = new RegExp(`${escapedLabel}\s*([\s\S]*?)\s*${boundary}`, "i");
+  const match = text.match(regex);
+  if (!match) return null;
+  const value = match[1].replace(/\s+/g, " ").trim();
+  return value || null;
+}
+
+function parseStockAnalysisSnapshotValue(text) {
+  const patterns = [
+    /Real-Time Price\s*·\s*USD[\s\S]*?Full Chart Watchlist Compare\s*([\d.]+)/i,
+    /NYSEARCA:\s*[A-Z]+\s*·\s*Real-Time Price\s*·\s*USD[\s\S]*?([\d.]+)\s*\+\d/i,
+  ];
+
+  for (const pattern of patterns) {
+    const match = text.match(pattern);
+    if (match) return toNumber(match[1]);
+  }
+
+  return null;
+}
+
+function parseStockAnalysisOverviewFallback(html) {
+  const text = stripTags(html);
+  const assetsLabel = extractStockAnalysisTextValue(text, "Assets", ["Expense Ratio", "PE Ratio", "Shares Out"]);
+  const expenseRatioLabel = extractStockAnalysisTextValue(text, "Expense Ratio", ["PE Ratio", "Shares Out", "Dividend"]);
+  const dividendYieldLabel = extractStockAnalysisTextValue(text, "Dividend Yield", ["Ex-Dividend Date", "Payout Frequency", "Volume"]);
+  const previousCloseLabel = extractStockAnalysisTextValue(text, "Previous Close", ["Day's Range", "52-Week Low", "52-Week High"]);
+  const openLabel = extractStockAnalysisTextValue(text, "Open", ["Previous Close", "Day's Range", "52-Week Low"]);
+  const categoryName =
+    extractStockAnalysisTextValue(text, "Category", ["Region", "Stock Exchange", "Ticker Symbol"]) ||
+    extractStockAnalysisTextValue(text, "Asset Class", ["Category", "Region", "Stock Exchange"]);
+  const provider = extractStockAnalysisTextValue(text, "ETF Provider", ["Index Tracked", "Top 10 Holdings"]);
+  const holdingsCount = extractStockAnalysisTextValue(text, "Holdings", ["Inception Date", "About"]);
+  const latestPrice = parseStockAnalysisSnapshotValue(text);
+
+  return {
+    assetsLabel,
+    expenseRatioLabel,
+    dividendYieldLabel,
+    previousCloseLabel,
+    openLabel,
+    categoryName,
+    provider,
+    holdingsCount,
+    latestPrice,
+  };
+}
+
 function parsePercentValue(value) {
   const numeric = toNumber(value);
   return numeric == null ? null : numeric;
@@ -516,17 +568,21 @@ async function fetchStockAnalysisEtfData(code, env) {
     fetchStockAnalysisPage(code, "/holdings/", env),
   ]);
 
-  const assetsLabel = extractStockAnalysisCellValue(overviewHtml, "Assets");
-  const expenseRatioLabel = extractStockAnalysisCellValue(overviewHtml, "Expense Ratio");
-  const dividendYieldLabel = extractStockAnalysisCellValue(overviewHtml, "Dividend Yield");
+  const overviewFallback = parseStockAnalysisOverviewFallback(overviewHtml);
+  const assetsLabel = extractStockAnalysisCellValue(overviewHtml, "Assets") || overviewFallback.assetsLabel;
+  const expenseRatioLabel = extractStockAnalysisCellValue(overviewHtml, "Expense Ratio") || overviewFallback.expenseRatioLabel;
+  const dividendYieldLabel = extractStockAnalysisCellValue(overviewHtml, "Dividend Yield") || overviewFallback.dividendYieldLabel;
   const lastPriceLabel =
     extractStockAnalysisCellValue(overviewHtml, "Previous Close") ||
-    extractStockAnalysisCellValue(overviewHtml, "Open");
-  const holdingsCount = extractStockAnalysisCellValue(overviewHtml, "Holdings");
+    extractStockAnalysisCellValue(overviewHtml, "Open") ||
+    overviewFallback.previousCloseLabel ||
+    overviewFallback.openLabel;
+  const holdingsCount = extractStockAnalysisCellValue(overviewHtml, "Holdings") || overviewFallback.holdingsCount;
   const categoryName =
     extractStockAnalysisCellValue(overviewHtml, "Category") ||
-    extractStockAnalysisCellValue(overviewHtml, "Asset Class");
-  const provider = extractStockAnalysisCellValue(overviewHtml, "ETF Provider");
+    extractStockAnalysisCellValue(overviewHtml, "Asset Class") ||
+    overviewFallback.categoryName;
+  const provider = extractStockAnalysisCellValue(overviewHtml, "ETF Provider") || overviewFallback.provider;
 
   const holdings = extractStockAnalysisHoldings(holdingsHtml);
 
@@ -540,8 +596,8 @@ async function fetchStockAnalysisEtfData(code, env) {
       dividendYieldLabel,
       nav: parseCompactMoney(lastPriceLabel),
       navLabel: lastPriceLabel,
-      latestPrice: parseCompactMoney(lastPriceLabel),
-      latestPriceLabel: lastPriceLabel,
+      latestPrice: firstDefined(overviewFallback.latestPrice, parseCompactMoney(lastPriceLabel)),
+      latestPriceLabel: overviewFallback.latestPrice != null ? `$${round(overviewFallback.latestPrice, 2)}` : lastPriceLabel,
       family: provider,
       categoryName,
       legalType: "ETF",
