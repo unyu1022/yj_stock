@@ -163,7 +163,7 @@ function decodeHtmlEntities(text) {
     .replace(/&#x27;/g, "'")
     .replace(/&#39;/g, "'")
     .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
+    .replace(/&gt;/g, ">");
 }
 
 function firstDefined(...values) {
@@ -691,8 +691,8 @@ function extractStockAnalysisTextValue(text, label, nextLabels = []) {
 
 function parseStockAnalysisSnapshotValue(text) {
   const patterns = [
-    /Real-Time Price\s*쨌\s*USD[\s\S]*?Full Chart Watchlist Compare\s*([\d.]+)/i,
-    /NYSEARCA:\s*[A-Z]+\s*쨌\s*Real-Time Price\s*쨌\s*USD[\s\S]*?([\d.]+)\s*\+\d/i,
+    /Real-Time Price\s*\S*\s*USD[\s\S]*?Full Chart Watchlist Compare\s*([\d.]+)/i,
+    /NYSEARCA:\s*[A-Z]+[\s\S]*?\$([\d.]+)/i,
   ];
 
   for (const pattern of patterns) {
@@ -705,17 +705,11 @@ function parseStockAnalysisSnapshotValue(text) {
 
 function parseStockAnalysisOverviewFallback(html) {
   const text = stripTags(html);
-  const assetsLabel = extractStockAnalysisTextValue(text, "Assets", ["Expense Ratio", "PE Ratio", "Shares Out"]);
-  const expenseRatioLabel = extractStockAnalysisTextValue(text, "Expense Ratio", ["PE Ratio", "Shares Out", "Dividend"]);
-  const dividendYieldLabel = extractStockAnalysisTextValue(text, "Dividend Yield", ["Ex-Dividend Date", "Payout Frequency", "Volume"]);
-  const previousCloseLabel = extractStockAnalysisTextValue(text, "Previous Close", ["Day's Range", "52-Week Low", "52-Week High"]);
-  const openLabel = extractStockAnalysisTextValue(text, "Open", ["Previous Close", "Day's Range", "52-Week Low"]);
-  const categoryName =
-    extractStockAnalysisTextValue(text, "Category", ["Region", "Stock Exchange", "Ticker Symbol"]) ||
-    extractStockAnalysisTextValue(text, "Asset Class", ["Category", "Region", "Stock Exchange"]);
-  const provider = extractStockAnalysisTextValue(text, "ETF Provider", ["Index Tracked", "Top 10 Holdings"]);
-  const holdingsCount = extractStockAnalysisTextValue(text, "Holdings", ["Inception Date", "About"]);
-  const latestPrice = parseStockAnalysisSnapshotValue(text);
+  const assetsLabel = extractStockAnalysisTextValue(text, "Assets", ["Expense Ratio", "Dividend Yield", "Prev Close", "Open"]);
+  const expenseRatioLabel = extractStockAnalysisTextValue(text, "Expense Ratio", ["Dividend Yield", "Prev Close", "Open"]);
+  const dividendYieldLabel = extractStockAnalysisTextValue(text, "Dividend Yield", ["Prev Close", "Open", "AUM"]);
+  const previousCloseLabel = extractStockAnalysisTextValue(text, "Prev Close", ["Open", "AUM", "Assets"]);
+  const openLabel = extractStockAnalysisTextValue(text, "Open", ["AUM", "Assets", "Category"]);
 
   return {
     assetsLabel,
@@ -723,22 +717,18 @@ function parseStockAnalysisOverviewFallback(html) {
     dividendYieldLabel,
     previousCloseLabel,
     openLabel,
-    categoryName,
-    provider,
-    holdingsCount,
-    latestPrice,
+    latestPrice: parseStockAnalysisSnapshotValue(text),
   };
 }
 
 function parsePercentValue(value) {
-  const numeric = toNumber(String(value).replace(/%/g, "").trim());
-  return numeric == null ? null : numeric;
+  const number = toNumber(String(value || "").replace(/%/g, ""));
+  return number == null ? null : number;
 }
 
 function parseCompactMoney(value) {
-  if (!value) return null;
-  const match = String(value).trim().match(/^\$?\s*([\d,.]+)\s*([KMBT])?$/i);
-  if (!match) return toNumber(value);
+  const match = String(value || "").trim().match(/^\$?([\d,.]+)\s*([KMBT])?$/i);
+  if (!match) return null;
   const number = Number(match[1].replace(/,/g, ""));
   const unit = (match[2] || "").toUpperCase();
   const multipliers = { "": 1, K: 1_000, M: 1_000_000, B: 1_000_000_000, T: 1_000_000_000_000 };
@@ -820,7 +810,7 @@ function extractStockAnalysisQuotedField(text, key) {
 }
 
 function extractStockAnalysisNumericField(text, key) {
-  const regex = new RegExp(`${key}:(-?\d+(?:\.\d+)?)`);
+  const regex = new RegExp(`${key}:(-?\\d+(?:\\.\\d+)?)`);
   const match = text.match(regex);
   return match ? Number(match[1]) : null;
 }
@@ -1009,19 +999,24 @@ function buildEtfDetailCards(info) {
       value: firstDefined(info.latestPriceLabel, info.latestPrice != null ? `$${round(info.latestPrice, 2)}` : null, info.navLabel, "-"),
       rawValue: info.latestPrice,
       kind: "money",
-      description: `최근 시장 가격 기준입니다.${info.latestPriceSource ? ` 출처: ${info.latestPriceSource}.` : ""}${info.latestPriceAsOf ? ` 기준일: ${info.latestPriceAsOf}.` : ""}`,
+      description: "최근 시장 가격 기준입니다.",
     },
   ];
 }
 
 function buildSourceList(code) {
-  const direxionUrl = DIREXION_PRODUCT_URLS[code.toUpperCase()];
-  return [
-    ...(direxionUrl ? [{ label: "Direxion ETF Page", url: direxionUrl }] : []),
+  const sources = [
     { label: "Yahoo Finance ETF Quote Page", url: `${YAHOO_FINANCE_QUOTE_URL}/${encodeURIComponent(code)}` },
     { label: "FMP Quote API", url: "https://site.financialmodelingprep.com/developer/docs/stable/quotes" },
     { label: "FMP ETF Information API", url: "https://site.financialmodelingprep.com/developer/docs/stable/information" },
   ];
+
+  const direxionUrl = DIREXION_PRODUCT_URLS[code.toUpperCase()];
+  if (direxionUrl) {
+    sources.push({ label: "Direxion Product Page", url: direxionUrl });
+  }
+
+  return sources;
 }
 
 function summarizeSourceError(error) {
@@ -1100,22 +1095,26 @@ export async function getUSEtfData(code, env, selectedName = "") {
 
   const quotePrice = toNumber(quote.price);
   const latestPrice = firstDefined(
-    direxionInfo.latestPrice,
     stockAnalysisInfo.latestPrice,
     yahooInfo.latestPrice,
     yahooInfo.nav,
+    direxionInfo.latestPrice,
     quotePrice,
     fmpInfo.latestPrice,
   );
   const latestPriceLabel = latestPrice != null ? `$${round(latestPrice, 2)}` : null;
   const latestPriceSource = firstDefined(
-    direxionInfo.latestPrice != null ? direxionInfo.latestPriceSource || "Direxion" : null,
     stockAnalysisInfo.latestPrice != null ? stockAnalysisInfo.latestPriceSource || "Stock Analysis" : null,
     yahooInfo.latestPrice != null || yahooInfo.nav != null ? yahooInfo.latestPriceSource || "Yahoo Finance" : null,
+    direxionInfo.latestPrice != null ? direxionInfo.latestPriceSource || "Direxion" : null,
     quotePrice != null ? "FMP Quote" : null,
     fmpInfo.latestPrice != null ? "FMP ETF Info" : null,
   );
-  const latestPriceAsOf = firstDefined(direxionInfo.latestPriceAsOf, stockAnalysisInfo.latestPriceAsOf, yahooInfo.latestPriceAsOf);
+  const latestPriceAsOf = firstDefined(
+    stockAnalysisInfo.latestPriceAsOf,
+    yahooInfo.latestPriceAsOf,
+    direxionInfo.latestPriceAsOf,
+  );
   const mergedInfo = {
     expenseRatio: firstDefined(stockAnalysisInfo.expenseRatio, alphaInfo.expenseRatio, yahooInfo.expenseRatio, fmpInfo.expenseRatio),
     expenseRatioLabel: firstDefined(stockAnalysisInfo.expenseRatioLabel, alphaInfo.expenseRatioLabel, yahooInfo.expenseRatioLabel),
@@ -1197,7 +1196,7 @@ export async function getUSEtfData(code, env, selectedName = "") {
       marketLabel: "미국 시장",
       industry: category,
       assetType: "ETF",
-      description: `${category}${provider ? ` · ${provider}` : ""}${latestPrice != null ? ` · 최근 가격 $${round(latestPrice, 2)}` : ""}${latestPriceAsOf ? ` · 기준 ${latestPriceAsOf}` : ""}`,
+      description: `${category}${provider ? ` · ${provider}` : ""}${latestPrice != null ? ` · 최근 가격 $${round(latestPrice, 2)}` : ""}`,
       metrics: {
         expenseRatio: mergedInfo.expenseRatio,
         dividendYield: mergedInfo.dividendYield,
@@ -1215,7 +1214,9 @@ export async function getUSEtfData(code, env, selectedName = "") {
       "레버리지 ETF는 복리 효과와 변동성 드래그 때문에 장기 보유 시 기초지수 단순 배수와 다른 성과가 나올 수 있습니다.",
       "운용보수와 배당수익률은 데이터 제공처와 업데이트 시점에 따라 조금씩 다를 수 있습니다.",
       "상위 보유 종목과 섹터 비중을 같이 보면 ETF가 실제로 어떤 테마와 집중 위험을 담고 있는지 파악하기 쉽습니다.",
-      ...(latestPriceSource ? [`최근 가격 소스: ${latestPriceSource}${latestPriceAsOf ? ` · 기준일 ${latestPriceAsOf}` : ""}`] : []),
+      ...(latestPriceSource
+        ? [`최근 가격 소스: ${latestPriceSource}${latestPriceAsOf ? ` · 기준일 ${latestPriceAsOf}` : ""}`]
+        : []),
       ...(hasSparseEtfData
         ? ["ETF 상세 소스 진단: " + sourceStatus.join(" | ")]
         : []),
