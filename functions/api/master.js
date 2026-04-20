@@ -2,6 +2,24 @@ import { json, serverError, badRequest } from "../_lib/http.js";
 
 const ONE_DAY = 24 * 60 * 60 * 1000;
 const FMP_BASE_URL = "https://financialmodelingprep.com/stable";
+const POPULAR_ETF_FALLBACK = [
+  ["QQQ", "Invesco QQQ Trust", "NASDAQ"],
+  ["SPY", "SPDR S&P 500 ETF Trust", "NYSE ARCA"],
+  ["VOO", "Vanguard S&P 500 ETF", "NYSE ARCA"],
+  ["IVV", "iShares Core S&P 500 ETF", "NYSE ARCA"],
+  ["DIA", "SPDR Dow Jones Industrial Average ETF Trust", "NYSE ARCA"],
+  ["IWM", "iShares Russell 2000 ETF", "NYSE ARCA"],
+  ["VTI", "Vanguard Total Stock Market ETF", "NYSE ARCA"],
+  ["SOXL", "Direxion Daily Semiconductor Bull 3X Shares", "NYSE ARCA"],
+  ["SOXS", "Direxion Daily Semiconductor Bear 3X Shares", "NYSE ARCA"],
+  ["TQQQ", "ProShares UltraPro QQQ", "NASDAQ"],
+  ["SQQQ", "ProShares UltraPro Short QQQ", "NASDAQ"],
+  ["UPRO", "ProShares UltraPro S&P500", "NYSE ARCA"],
+  ["SPXL", "Direxion Daily S&P 500 Bull 3X Shares", "NYSE ARCA"],
+  ["SPXS", "Direxion Daily S&P 500 Bear 3X Shares", "NYSE ARCA"],
+  ["TECL", "Direxion Daily Technology Bull 3X Shares", "NYSE ARCA"],
+  ["TECS", "Direxion Daily Technology Bear 3X Shares", "NYSE ARCA"],
+];
 const cache = {
   KR: { fetchedAt: 0, items: null },
   US: { fetchedAt: 0, items: null },
@@ -112,8 +130,15 @@ async function loadUSMaster(env) {
     }
   }
 
+  const fallbackEtfItems = POPULAR_ETF_FALLBACK.map(([code, name, exchange]) => ({
+    code,
+    name,
+    exchange,
+    assetType: "ETF",
+  }));
+
   const deduped = new Map();
-  [...stockItems, ...etfItems].forEach((item) => {
+  [...stockItems, ...etfItems, ...fallbackEtfItems].forEach((item) => {
     const key = String(item.code || "").toUpperCase();
     if (!key) return;
     if (!deduped.has(key)) {
