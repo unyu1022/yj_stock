@@ -31,9 +31,10 @@ export async function onRequestGet(context) {
 
     if (market === "US" && payload?.stock?.assetType !== "ETF") {
       const metrics = payload?.stock?.metrics ?? {};
-      const needsFallback = [metrics.roe, metrics.roic, metrics.operatingMargin, metrics.dividendYield].some(
-        (value) => value == null,
-      );
+      const needsFallback =
+        [metrics.roe, metrics.roic, metrics.operatingMargin, metrics.dividendYield].some((value) => value == null) ||
+        !Array.isArray(payload?.history) ||
+        payload.history.length === 0;
 
       if (needsFallback) {
         try {
