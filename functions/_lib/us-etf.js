@@ -4,6 +4,7 @@ import { round, toNumber } from "./metrics.js";
 const HALF_DAY = 12 * 60 * 60 * 1000;
 const FMP_BASE_URL = "https://financialmodelingprep.com/stable";
 const YAHOO_FINANCE_QUOTE_URL = "https://finance.yahoo.com/quote";
+const STOCKANALYSIS_ETF_URL = "https://stockanalysis.com/etf";
 
 function fmpHeaders(env) {
   return {
@@ -70,6 +71,19 @@ async function fetchYahooQuotePage(code, env) {
 
   if (!response.ok) {
     throw new Error(`Yahoo Finance ETF page request failed: HTTP ${response.status}`);
+  }
+
+  return html;
+}
+
+async function fetchStockAnalysisPage(code, suffix = "", env) {
+  const response = await fetch(`${STOCKANALYSIS_ETF_URL}/${encodeURIComponent(code.toLowerCase())}${suffix}`, {
+    headers: yahooHeaders(env),
+  });
+  const html = await response.text();
+
+  if (!response.ok) {
+    throw new Error(`Stock Analysis ETF page request failed: HTTP ${response.status}`);
   }
 
   return html;
@@ -455,6 +469,88 @@ function extractYahooRegexFallback(html) {
   };
 }
 
+function stripTags(text) {
+  return text.replace(/<[^>]+>/g, " ").replace(/&nbsp;/g, " ").replace(/\s+/g, " ").trim();
+}
+
+function extractStockAnalysisCellValue(html, label) {
+  const escapedLabel = label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const regex = new RegExp(`${escapedLabel}</td><td[^>]*>([\\s\\S]*?)</td>`, "i");
+  const match = html.match(regex);
+  return match ? stripTags(match[1]) : null;
+}
+
+function parsePercentValue(value) {
+  const numeric = toNumber(value);
+  return numeric == null ? null : numeric;
+}
+
+function parseCompactMoney(value) {
+  if (!value) return null;
+  const match = String(value).trim().match(/^\$?\s*([\d,.]+)\s*([KMBT])?$/i);
+  if (!match) return toNumber(value);
+  const number = Number(match[1].replace(/,/g, ""));
+  const unit = (match[2] || "").toUpperCase();
+  const multipliers = { "": 1, K: 1_000, M: 1_000_000, B: 1_000_000_000, T: 1_000_000_000_000 };
+  return number * (multipliers[unit] || 1);
+}
+
+function extractStockAnalysisHoldings(html) {
+  const rowPattern = /<tr[^>]*class="[^"]*border-t[^"]*"[^>]*>\s*<td[^>]*>([\s\S]*?)<\/td>\s*<td[^>]*>([\s\S]*?)<\/td>\s*<td[^>]*>([\s\S]*?)<\/td>/gi;
+  const rows = [];
+  for (const match of html.matchAll(rowPattern)) {
+    const name = stripTags(match[1]);
+    const symbol = stripTags(match[2]);
+    const weight = parsePercentValue(stripTags(match[3]));
+    if (!name || !symbol || weight == null) continue;
+    rows.push({ name, symbol, weight });
+    if (rows.length >= 10) break;
+  }
+  return rows;
+}
+
+async function fetchStockAnalysisEtfData(code, env) {
+  const [overviewHtml, holdingsHtml] = await Promise.all([
+    fetchStockAnalysisPage(code, "/", env),
+    fetchStockAnalysisPage(code, "/holdings/", env),
+  ]);
+
+  const assetsLabel = extractStockAnalysisCellValue(overviewHtml, "Assets");
+  const expenseRatioLabel = extractStockAnalysisCellValue(overviewHtml, "Expense Ratio");
+  const dividendYieldLabel = extractStockAnalysisCellValue(overviewHtml, "Dividend Yield");
+  const lastPriceLabel =
+    extractStockAnalysisCellValue(overviewHtml, "Previous Close") ||
+    extractStockAnalysisCellValue(overviewHtml, "Open");
+  const categoryName =
+    extractStockAnalysisCellValue(overviewHtml, "Category") ||
+    extractStockAnalysisCellValue(overviewHtml, "Asset Class");
+  const provider = extractStockAnalysisCellValue(overviewHtml, "ETF Provider");
+
+  const holdings = extractStockAnalysisHoldings(holdingsHtml);
+
+  return {
+    info: {
+      expenseRatio: parsePercentValue(expenseRatioLabel),
+      expenseRatioLabel,
+      assetsUnderManagement: parseCompactMoney(assetsLabel),
+      assetsUnderManagementLabel: assetsLabel,
+      dividendYield: parsePercentValue(dividendYieldLabel),
+      dividendYieldLabel,
+      nav: parseCompactMoney(lastPriceLabel),
+      navLabel: lastPriceLabel,
+      latestPrice: parseCompactMoney(lastPriceLabel),
+      latestPriceLabel: lastPriceLabel,
+      family: provider,
+      categoryName,
+      legalType: "ETF",
+      longName: null,
+    },
+    holdings,
+    sectorWeights: [],
+    summary: null,
+  };
+}
+
 async function fetchYahooEtfData(code, env) {
   const html = await fetchYahooQuotePage(code, env);
 
@@ -516,6 +612,13 @@ function buildSourceList(code) {
 }
 
 export async function getUSEtfData(code, env, selectedName = "") {
+  let stockAnalysisData = null;
+  try {
+    stockAnalysisData = await fetchStockAnalysisEtfData(code, env);
+  } catch {
+    stockAnalysisData = null;
+  }
+
   let yahooData = null;
   try {
     yahooData = await fetchYahooEtfData(code, env);
@@ -541,24 +644,30 @@ export async function getUSEtfData(code, env, selectedName = "") {
   const profile = Array.isArray(profileData) ? profileData[0] ?? {} : profileData ?? {};
   const fmpInfo = normalizeFmpInfoRow(Array.isArray(infoData) ? infoData[0] ?? {} : infoData ?? {});
   const yahooInfo = yahooData?.info ?? {};
+  const stockAnalysisInfo = stockAnalysisData?.info ?? {};
 
-  const latestPrice = firstDefined(toNumber(quote.price), yahooInfo.latestPrice, yahooInfo.nav);
+  const latestPrice = firstDefined(toNumber(quote.price), stockAnalysisInfo.latestPrice, yahooInfo.latestPrice, yahooInfo.nav);
   const mergedInfo = {
-    expenseRatio: firstDefined(yahooInfo.expenseRatio, fmpInfo.expenseRatio),
-    expenseRatioLabel: yahooInfo.expenseRatioLabel || null,
-    dividendYield: firstDefined(yahooInfo.dividendYield, fmpInfo.dividendYield),
-    dividendYieldLabel: yahooInfo.dividendYieldLabel || null,
-    assetsUnderManagement: firstDefined(yahooInfo.assetsUnderManagement, fmpInfo.assetsUnderManagement),
-    assetsUnderManagementLabel: yahooInfo.assetsUnderManagementLabel || null,
-    nav: firstDefined(yahooInfo.nav, fmpInfo.nav, latestPrice),
-    navLabel: yahooInfo.navLabel || null,
+    expenseRatio: firstDefined(stockAnalysisInfo.expenseRatio, yahooInfo.expenseRatio, fmpInfo.expenseRatio),
+    expenseRatioLabel: firstDefined(stockAnalysisInfo.expenseRatioLabel, yahooInfo.expenseRatioLabel),
+    dividendYield: firstDefined(stockAnalysisInfo.dividendYield, yahooInfo.dividendYield, fmpInfo.dividendYield),
+    dividendYieldLabel: firstDefined(stockAnalysisInfo.dividendYieldLabel, yahooInfo.dividendYieldLabel),
+    assetsUnderManagement: firstDefined(stockAnalysisInfo.assetsUnderManagement, yahooInfo.assetsUnderManagement, fmpInfo.assetsUnderManagement),
+    assetsUnderManagementLabel: firstDefined(stockAnalysisInfo.assetsUnderManagementLabel, yahooInfo.assetsUnderManagementLabel),
+    nav: firstDefined(stockAnalysisInfo.nav, yahooInfo.nav, fmpInfo.nav, latestPrice),
+    navLabel: firstDefined(stockAnalysisInfo.navLabel, yahooInfo.navLabel),
     latestPrice,
-    latestPriceLabel: yahooInfo.latestPriceLabel || null,
+    latestPriceLabel: firstDefined(stockAnalysisInfo.latestPriceLabel, yahooInfo.latestPriceLabel),
   };
 
-  const holdings = yahooData?.holdings?.length ? yahooData.holdings : normalizeFmpHoldings(holdingsData);
+  const holdings = stockAnalysisData?.holdings?.length
+    ? stockAnalysisData.holdings
+    : yahooData?.holdings?.length
+      ? yahooData.holdings
+      : normalizeFmpHoldings(holdingsData);
   const sectorWeights = yahooData?.sectorWeights?.length ? yahooData.sectorWeights : normalizeFmpSectorWeights(sectorData);
   const category = firstDefined(
+    stockAnalysisInfo.categoryName,
     yahooData?.summary?.fundProfile?.categoryName,
     yahooInfo.categoryName,
     yahooData?.summary?.fundProfile?.legalType,
@@ -568,6 +677,7 @@ export async function getUSEtfData(code, env, selectedName = "") {
     "ETF",
   );
   const provider = firstDefined(
+    stockAnalysisInfo.family,
     yahooData?.summary?.fundProfile?.family,
     yahooInfo.family,
     profile.companyName,
@@ -575,6 +685,7 @@ export async function getUSEtfData(code, env, selectedName = "") {
   const displayName = firstDefined(
     selectedName,
     yahooData?.summary?.price?.longName,
+    stockAnalysisInfo.longName,
     yahooInfo.longName,
     yahooData?.summary?.price?.shortName,
     profile.companyName,
@@ -608,6 +719,10 @@ export async function getUSEtfData(code, env, selectedName = "") {
       "Expense ratio and dividend yield can differ slightly by data vendor and update timing.",
       "Top holdings and sector weights help show which theme and risk concentration the ETF is actually carrying.",
     ],
-    sources: buildSourceList(code),
+    sources: [
+      { label: "Stock Analysis ETF Overview", url: `${STOCKANALYSIS_ETF_URL}/${encodeURIComponent(code.toLowerCase())}/` },
+      { label: "Stock Analysis ETF Holdings", url: `${STOCKANALYSIS_ETF_URL}/${encodeURIComponent(code.toLowerCase())}/holdings/` },
+      ...buildSourceList(code),
+    ],
   };
 }
