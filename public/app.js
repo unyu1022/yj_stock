@@ -9,7 +9,6 @@ const state = {
 
 const ui = {
   searchInput: document.querySelector("#stock-search"),
-  clearSearch: document.querySelector("#clear-search"),
   searchResults: document.querySelector("#search-results"),
   selectionSummary: document.querySelector("#selection-summary"),
   fxBanner: document.querySelector("#fxBanner"),
@@ -503,6 +502,19 @@ function renderQuarterlyTrend(history, metricDefinitions) {
       ? metricDefinitions
       : DEFAULT_METRIC_DEFINITIONS;
 
+  if (!Array.isArray(history) || !history.length) {
+    ui.quarterlyTrend.innerHTML = `
+      <article class="quarter-card">
+        <div class="quarter-head">
+          <h3>최근 1년 분기 흐름</h3>
+          <span class="metric-tag tag-muted">No quarterly history</span>
+        </div>
+        <div class="empty-state">분기 재무 히스토리를 받지 못해 현재 지표 중심으로 표시합니다.</div>
+      </article>
+    `;
+    return;
+  }
+
   ui.quarterlyTrend.innerHTML = history
     .map((quarter) => {
       const pairs = safeMetricDefinitions
@@ -907,11 +919,6 @@ function scheduleSearch(query) {
 function attachEvents() {
   ui.searchInput.addEventListener("input", (event) => {
     scheduleSearch(event.target.value.trim());
-  });
-
-  ui.clearSearch?.addEventListener("click", () => {
-    resetSearchSelection();
-    ui.searchInput.focus();
   });
 
   document.body.addEventListener("click", (event) => {
