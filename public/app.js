@@ -9,6 +9,7 @@ const state = {
 
 const ui = {
   searchInput: document.querySelector("#stock-search"),
+  clearSearch: document.querySelector("#clear-search"),
   searchResults: document.querySelector("#search-results"),
   selectionSummary: document.querySelector("#selection-summary"),
   fxBanner: document.querySelector("#fxBanner"),
@@ -27,6 +28,58 @@ const ui = {
   backtestChart: document.querySelector("#backtestChart"),
   backtestNotes: document.querySelector("#backtestNotes"),
 };
+
+const DEFAULT_METRIC_DEFINITIONS = [
+  {
+    key: "per",
+    label: "PER",
+    category: "가치",
+    format: "x",
+    guidance: "주가를 주당순이익으로 나눈 값입니다.",
+  },
+  {
+    key: "pbr",
+    label: "PBR",
+    category: "가치",
+    format: "x",
+    guidance: "주가를 주당순자산으로 나눈 값입니다.",
+  },
+  {
+    key: "roe",
+    label: "ROE",
+    category: "성장",
+    format: "%",
+    guidance: "자기자본 대비 수익성입니다.",
+  },
+  {
+    key: "roic",
+    label: "ROIC",
+    category: "성장",
+    format: "%",
+    guidance: "투하자본 대비 수익성입니다.",
+  },
+  {
+    key: "operatingMargin",
+    label: "영업이익률",
+    category: "성장",
+    format: "%",
+    guidance: "매출 대비 영업이익 비율입니다.",
+  },
+  {
+    key: "debtRatio",
+    label: "부채비율",
+    category: "건전성",
+    format: "%",
+    guidance: "자기자본 대비 부채 비율입니다.",
+  },
+  {
+    key: "dividendYield",
+    label: "배당수익률",
+    category: "건전성",
+    format: "%",
+    guidance: "주가 대비 배당 비율입니다.",
+  },
+];
 
 function formatMetric(value, format) {
   if (value == null || Number.isNaN(value)) return "-";
@@ -395,7 +448,12 @@ function renderMetrics(stock, history) {
     return;
   }
 
-  ui.metricGrid.innerHTML = stock.metricDefinitions
+  const metricDefinitions =
+    Array.isArray(stock.metricDefinitions) && stock.metricDefinitions.length
+      ? stock.metricDefinitions
+      : DEFAULT_METRIC_DEFINITIONS;
+
+  ui.metricGrid.innerHTML = metricDefinitions
     .map((metric) => {
       const value = stock.metrics[metric.key];
       const evaluation = evaluateMetric(metric.key, value);
@@ -440,9 +498,14 @@ function renderQuarterlyTrend(history, metricDefinitions) {
     return;
   }
 
+  const safeMetricDefinitions =
+    Array.isArray(metricDefinitions) && metricDefinitions.length
+      ? metricDefinitions
+      : DEFAULT_METRIC_DEFINITIONS;
+
   ui.quarterlyTrend.innerHTML = history
     .map((quarter) => {
-      const pairs = metricDefinitions
+      const pairs = safeMetricDefinitions
         .map(
           (metric) => `
             <div class="pair">
@@ -784,6 +847,21 @@ function renderIdleSearchState() {
   `;
 }
 
+function resetSearchSelection() {
+  state.selectedStock = null;
+  state.stockData = null;
+  ui.searchInput.value = "";
+  ui.selectionSummary.innerHTML = "";
+  renderFxBanner();
+  ui.insightSummary.classList.add("empty-state");
+  ui.insightSummary.textContent = "종목을 선택하면 현재 평가와 전망이 표시됩니다.";
+  ui.metricGrid.innerHTML = "";
+  ui.quarterlyTrend.innerHTML = "";
+  renderBacktestTarget(null);
+  renderBacktestIdleState();
+  renderIdleSearchState();
+}
+
 async function loadStock(code, name = "", assetType = "") {
   setLoading("실데이터를 조회하고 있습니다...");
   try {
@@ -829,6 +907,11 @@ function scheduleSearch(query) {
 function attachEvents() {
   ui.searchInput.addEventListener("input", (event) => {
     scheduleSearch(event.target.value.trim());
+  });
+
+  ui.clearSearch?.addEventListener("click", () => {
+    resetSearchSelection();
+    ui.searchInput.focus();
   });
 
   document.body.addEventListener("click", (event) => {
