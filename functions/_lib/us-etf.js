@@ -7,6 +7,10 @@ const FMP_BASE_URL = "https://financialmodelingprep.com/stable";
 const YAHOO_FINANCE_QUOTE_URL = "https://finance.yahoo.com/quote";
 const STOCKANALYSIS_ETF_URL = "https://stockanalysis.com/etf";
 const ALPHA_VANTAGE_URL = "https://www.alphavantage.co/query";
+const DIREXION_PRODUCT_URLS = {
+  SOXL: "https://www.direxion.com/product/daily-semiconductor-bull-bear-3x-etfs",
+  SOXS: "https://www.direxion.com/product/daily-semiconductor-bull-bear-3x-etfs",
+};
 
 function fmpHeaders(env) {
   return {
@@ -134,6 +138,24 @@ async function fetchStockAnalysisPage(code, suffix = "", env) {
   return html;
 }
 
+async function fetchDirexionPage(code, env) {
+  const url = DIREXION_PRODUCT_URLS[code.toUpperCase()];
+  if (!url) {
+    throw new Error("No Direxion product page mapping for this ETF.");
+  }
+
+  const response = await fetch(url, {
+    headers: yahooHeaders(env),
+  });
+  const html = await response.text();
+
+  if (!response.ok) {
+    throw new Error(`Direxion ETF page request failed: HTTP ${response.status}`);
+  }
+
+  return html;
+}
+
 function decodeHtmlEntities(text) {
   return text
     .replace(/&quot;/g, "\"")
@@ -141,7 +163,7 @@ function decodeHtmlEntities(text) {
     .replace(/&#x27;/g, "'")
     .replace(/&#39;/g, "'")
     .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">");
+    .replace(/&gt;/g, ">")
 }
 
 function firstDefined(...values) {
@@ -723,6 +745,49 @@ function parseCompactMoney(value) {
   return number * (multipliers[unit] || 1);
 }
 
+function normalizeUsDateLabel(value) {
+  const match = String(value || "").match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+  if (!match) return value || null;
+  return `${match[3]}-${match[1]}-${match[2]}`;
+}
+
+function extractDirexionEtfData(html, code) {
+  const asOfMatch =
+    html.match(/NAV and Market Price information as of\s*(\d{2}\/\d{2}\/\d{4})/i) ||
+    html.match(/Pricing & Performance[\s\S]*?as of\s*(\d{2}\/\d{2}\/\d{4})/i);
+  const asOf = normalizeUsDateLabel(asOfMatch?.[1] || null);
+  const escapedCode = code.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+  const priceMatch =
+    html.match(new RegExp(`${escapedCode}[\\s\\S]{0,2000}?Daily Market Price\\$([\\d.,]+)`, "i")) ||
+    html.match(new RegExp(`${escapedCode}[\\s\\S]{0,2000}?Market Price Closing[\\s\\S]{0,400}?\\$([\\d.,]+)`, "i"));
+  const navMatch =
+    html.match(new RegExp(`${escapedCode}[\\s\\S]{0,2000}?Daily NAV\\$([\\d.,]+)`, "i")) ||
+    html.match(new RegExp(`${escapedCode}[\\s\\S]{0,2000}?Net Asset Value \\(NAV\\)[\\s\\S]{0,400}?\\$([\\d.,]+)`, "i"));
+
+  return {
+    info: {
+      latestPrice: toNumber(priceMatch?.[1]),
+      latestPriceLabel: priceMatch?.[1] ? `$${priceMatch[1]}` : null,
+      latestPriceSource: priceMatch?.[1] ? "Direxion" : null,
+      latestPriceAsOf: asOf,
+      nav: toNumber(navMatch?.[1]),
+      navLabel: navMatch?.[1] ? `$${navMatch[1]}` : null,
+    },
+  };
+}
+
+async function fetchDirexionEtfData(code, env) {
+  if (!DIREXION_PRODUCT_URLS[code.toUpperCase()]) {
+    return null;
+  }
+
+  return remember(`direxion:${code.toUpperCase()}`, QUOTE_TTL, async () => {
+    const html = await fetchDirexionPage(code, env);
+    return extractDirexionEtfData(html, code.toUpperCase());
+  });
+}
+
 function extractStockAnalysisHoldings(html) {
   const rowPattern = /<tr[^>]*class="[^"]*border-t[^"]*"[^>]*>\s*<td[^>]*>([\s\S]*?)<\/td>\s*<td[^>]*>([\s\S]*?)<\/td>\s*<td[^>]*>([\s\S]*?)<\/td>/gi;
   const rows = [];
@@ -944,13 +1009,15 @@ function buildEtfDetailCards(info) {
       value: firstDefined(info.latestPriceLabel, info.latestPrice != null ? `$${round(info.latestPrice, 2)}` : null, info.navLabel, "-"),
       rawValue: info.latestPrice,
       kind: "money",
-      description: "최근 시장 가격 기준입니다.",
+      description: `최근 시장 가격 기준입니다.${info.latestPriceSource ? ` 출처: ${info.latestPriceSource}.` : ""}${info.latestPriceAsOf ? ` 기준일: ${info.latestPriceAsOf}.` : ""}`,
     },
   ];
 }
 
 function buildSourceList(code) {
+  const direxionUrl = DIREXION_PRODUCT_URLS[code.toUpperCase()];
   return [
+    ...(direxionUrl ? [{ label: "Direxion ETF Page", url: direxionUrl }] : []),
     { label: "Yahoo Finance ETF Quote Page", url: `${YAHOO_FINANCE_QUOTE_URL}/${encodeURIComponent(code)}` },
     { label: "FMP Quote API", url: "https://site.financialmodelingprep.com/developer/docs/stable/quotes" },
     { label: "FMP ETF Information API", url: "https://site.financialmodelingprep.com/developer/docs/stable/information" },
@@ -968,6 +1035,15 @@ function summarizeSourceError(error) {
 }
 
 export async function getUSEtfData(code, env, selectedName = "") {
+  let direxionData = null;
+  let direxionError = null;
+  try {
+    direxionData = await fetchDirexionEtfData(code, env);
+  } catch (error) {
+    direxionData = null;
+    direxionError = error;
+  }
+
   let alphaVantageData = null;
   let alphaVantageError = null;
   try {
@@ -1017,19 +1093,29 @@ export async function getUSEtfData(code, env, selectedName = "") {
   const quote = Array.isArray(quoteData) ? quoteData[0] ?? {} : quoteData ?? {};
   const profile = Array.isArray(profileData) ? profileData[0] ?? {} : profileData ?? {};
   const fmpInfo = normalizeFmpInfoRow(Array.isArray(infoData) ? infoData[0] ?? {} : infoData ?? {});
+  const direxionInfo = direxionData?.info ?? {};
   const alphaInfo = alphaVantageData?.info ?? {};
   const yahooInfo = yahooData?.info ?? {};
   const stockAnalysisInfo = stockAnalysisData?.info ?? {};
 
   const quotePrice = toNumber(quote.price);
-  const latestPrice = firstDefined(stockAnalysisInfo.latestPrice, yahooInfo.latestPrice, yahooInfo.nav, quotePrice, fmpInfo.latestPrice);
+  const latestPrice = firstDefined(
+    direxionInfo.latestPrice,
+    stockAnalysisInfo.latestPrice,
+    yahooInfo.latestPrice,
+    yahooInfo.nav,
+    quotePrice,
+    fmpInfo.latestPrice,
+  );
   const latestPriceLabel = latestPrice != null ? `$${round(latestPrice, 2)}` : null;
   const latestPriceSource = firstDefined(
+    direxionInfo.latestPrice != null ? direxionInfo.latestPriceSource || "Direxion" : null,
     stockAnalysisInfo.latestPrice != null ? stockAnalysisInfo.latestPriceSource || "Stock Analysis" : null,
     yahooInfo.latestPrice != null || yahooInfo.nav != null ? yahooInfo.latestPriceSource || "Yahoo Finance" : null,
     quotePrice != null ? "FMP Quote" : null,
     fmpInfo.latestPrice != null ? "FMP ETF Info" : null,
   );
+  const latestPriceAsOf = firstDefined(direxionInfo.latestPriceAsOf, stockAnalysisInfo.latestPriceAsOf, yahooInfo.latestPriceAsOf);
   const mergedInfo = {
     expenseRatio: firstDefined(stockAnalysisInfo.expenseRatio, alphaInfo.expenseRatio, yahooInfo.expenseRatio, fmpInfo.expenseRatio),
     expenseRatioLabel: firstDefined(stockAnalysisInfo.expenseRatioLabel, alphaInfo.expenseRatioLabel, yahooInfo.expenseRatioLabel),
@@ -1037,11 +1123,12 @@ export async function getUSEtfData(code, env, selectedName = "") {
     dividendYieldLabel: firstDefined(stockAnalysisInfo.dividendYieldLabel, alphaInfo.dividendYieldLabel, yahooInfo.dividendYieldLabel),
     assetsUnderManagement: firstDefined(stockAnalysisInfo.assetsUnderManagement, alphaInfo.assetsUnderManagement, yahooInfo.assetsUnderManagement, fmpInfo.assetsUnderManagement),
     assetsUnderManagementLabel: firstDefined(stockAnalysisInfo.assetsUnderManagementLabel, alphaInfo.assetsUnderManagementLabel, yahooInfo.assetsUnderManagementLabel),
-    nav: firstDefined(fmpInfo.nav, stockAnalysisInfo.nav, yahooInfo.nav, latestPrice),
-    navLabel: firstDefined(latestPriceLabel, stockAnalysisInfo.navLabel, yahooInfo.navLabel),
+    nav: firstDefined(direxionInfo.nav, fmpInfo.nav, stockAnalysisInfo.nav, yahooInfo.nav, latestPrice),
+    navLabel: firstDefined(direxionInfo.navLabel, latestPriceLabel, stockAnalysisInfo.navLabel, yahooInfo.navLabel),
     latestPrice,
     latestPriceLabel,
     latestPriceSource,
+    latestPriceAsOf,
   };
 
   const holdings = alphaVantageData?.holdings?.length
@@ -1086,6 +1173,7 @@ export async function getUSEtfData(code, env, selectedName = "") {
   );
 
   const sourceStatus = [
+    `Direxion ETF page: ${direxionData ? "ok" : summarizeSourceError(direxionError || "unavailable")}`,
     `Alpha Vantage ETF_PROFILE: ${alphaVantageData ? "ok" : summarizeSourceError(alphaVantageError || "unavailable")}`,
     `Stock Analysis overview/holdings: ${stockAnalysisData ? "ok" : summarizeSourceError(stockAnalysisError || "unavailable")}`,
     `Yahoo ETF page: ${yahooData ? "ok" : summarizeSourceError(yahooError || "unavailable")}`,
@@ -1109,7 +1197,7 @@ export async function getUSEtfData(code, env, selectedName = "") {
       marketLabel: "미국 시장",
       industry: category,
       assetType: "ETF",
-      description: `${category}${provider ? ` · ${provider}` : ""}${latestPrice != null ? ` · 최근 가격 $${round(latestPrice, 2)}` : ""}`,
+      description: `${category}${provider ? ` · ${provider}` : ""}${latestPrice != null ? ` · 최근 가격 $${round(latestPrice, 2)}` : ""}${latestPriceAsOf ? ` · 기준 ${latestPriceAsOf}` : ""}`,
       metrics: {
         expenseRatio: mergedInfo.expenseRatio,
         dividendYield: mergedInfo.dividendYield,
@@ -1127,7 +1215,7 @@ export async function getUSEtfData(code, env, selectedName = "") {
       "레버리지 ETF는 복리 효과와 변동성 드래그 때문에 장기 보유 시 기초지수 단순 배수와 다른 성과가 나올 수 있습니다.",
       "운용보수와 배당수익률은 데이터 제공처와 업데이트 시점에 따라 조금씩 다를 수 있습니다.",
       "상위 보유 종목과 섹터 비중을 같이 보면 ETF가 실제로 어떤 테마와 집중 위험을 담고 있는지 파악하기 쉽습니다.",
-      ...(latestPriceSource ? [`최근 가격 소스: ${latestPriceSource}`] : []),
+      ...(latestPriceSource ? [`최근 가격 소스: ${latestPriceSource}${latestPriceAsOf ? ` · 기준일 ${latestPriceAsOf}` : ""}`] : []),
       ...(hasSparseEtfData
         ? ["ETF 상세 소스 진단: " + sourceStatus.join(" | ")]
         : []),
