@@ -650,7 +650,7 @@ function stripTags(text) {
 
 function extractStockAnalysisCellValue(html, label) {
   const escapedLabel = label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const regex = new RegExp(`${escapedLabel}</td><td[^>]*>([\s\S]*?)</td>`, "i");
+  const regex = new RegExp(`${escapedLabel}</td><td[^>]*>([\\s\\S]*?)</td>`, "i");
   const match = html.match(regex);
   return match ? stripTags(match[1]) : null;
 }
@@ -659,7 +659,7 @@ function extractStockAnalysisTextValue(text, label, nextLabels = []) {
   const escapedLabel = label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const escapedNext = nextLabels.map((item) => item.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
   const boundary = escapedNext.length ? `(?=${escapedNext.join("|")}|$)` : "$";
-  const regex = new RegExp(`${escapedLabel}\s*([\s\S]*?)\s*${boundary}`, "i");
+  const regex = new RegExp(`${escapedLabel}\\s*([\\s\\S]*?)\\s*${boundary}`, "i");
   const match = text.match(regex);
   if (!match) return null;
   const value = match[1].replace(/\s+/g, " ").trim();
@@ -668,8 +668,8 @@ function extractStockAnalysisTextValue(text, label, nextLabels = []) {
 
 function parseStockAnalysisSnapshotValue(text) {
   const patterns = [
-    /Real-Time Price\s*·\s*USD[\s\S]*?Full Chart Watchlist Compare\s*([\d.]+)/i,
-    /NYSEARCA:\s*[A-Z]+\s*·\s*Real-Time Price\s*·\s*USD[\s\S]*?([\d.]+)\s*\+\d/i,
+    /Real-Time Price\s*쨌\s*USD[\s\S]*?Full Chart Watchlist Compare\s*([\d.]+)/i,
+    /NYSEARCA:\s*[A-Z]+\s*쨌\s*Real-Time Price\s*쨌\s*USD[\s\S]*?([\d.]+)\s*\+\d/i,
   ];
 
   for (const pattern of patterns) {
@@ -708,7 +708,7 @@ function parseStockAnalysisOverviewFallback(html) {
 }
 
 function parsePercentValue(value) {
-  const numeric = toNumber(value);
+  const numeric = toNumber(String(value).replace(/%/g, "").trim());
   return numeric == null ? null : numeric;
 }
 
@@ -806,6 +806,20 @@ function extractStockAnalysisHoldingsFromScript(html) {
         weight: toNumber(match[2]),
       });
       if (sectorWeights.length >= 8) break;
+    }
+  }
+
+  if (!sectorWeights.length) {
+    const chartSectorsBlockMatch = scriptText.match(/allocationChartData:\{[\s\S]*?sectors:\[(.*?)\](?:,assets:|,countries:)/s);
+    if (chartSectorsBlockMatch) {
+      const chartSectorPattern = /name:"([^"]+)",y:([0-9.]+)/g;
+      for (const match of chartSectorsBlockMatch[1].matchAll(chartSectorPattern)) {
+        sectorWeights.push({
+          name: match[1],
+          weight: toNumber(match[2]),
+        });
+        if (sectorWeights.length >= 8) break;
+      }
     }
   }
 
