@@ -5,7 +5,7 @@ const ONE_DAY = 24 * 60 * 60 * 1000;
 const HALF_DAY = 12 * 60 * 60 * 1000;
 const SEC_TICKERS_URL = "https://www.sec.gov/files/company_tickers_exchange.json";
 const FMP_BASE_URL = "https://financialmodelingprep.com/stable";
-const YAHOO_QUOTE_SUMMARY_URL = "https://query1.finance.yahoo.com/v10/finance/quoteSummary";
+const STOCKANALYSIS_STOCK_URL = "https://stockanalysis.com/stocks";
 const ETF_LIST_TTL = 6 * 60 * 60 * 1000;
 const POPULAR_ETF_FALLBACK = [
   ["QQQ", "Invesco QQQ Trust", "NASDAQ"],
@@ -41,10 +41,10 @@ function fmpHeaders(env) {
   };
 }
 
-function yahooHeaders(env) {
+function htmlHeaders(env) {
   return {
     "user-agent": `Mozilla/5.0 Stock Insight PWA ${env.SEC_CONTACT_EMAIL || "admin@example.com"}`,
-    accept: "application/json, text/plain, */*",
+    accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
     "accept-language": "en-US,en;q=0.9",
   };
 }
@@ -373,77 +373,131 @@ async function fmpFetch(path, params, env, ttl = HALF_DAY) {
   });
 }
 
-async function yahooQuoteSummaryFetch(symbol, env, ttl = HALF_DAY) {
-  const params = new URLSearchParams({
-    modules: "price,summaryDetail,financialData,defaultKeyStatistics,assetProfile",
-  });
-  const cacheKey = `yahoo:quote-summary:${symbol}?${params.toString()}`;
+function stripTags(text) {
+  return String(text || "")
+    .replace(/<!--[\s\S]*?-->/g, " ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+async function fetchStockAnalysisRatiosPage(symbol, env, ttl = HALF_DAY) {
+  const cacheKey = `stockanalysis:ratios:${symbol.toLowerCase()}`;
 
   return remember(cacheKey, ttl, async () => {
-    const response = await fetch(`${YAHOO_QUOTE_SUMMARY_URL}/${encodeURIComponent(symbol)}?${params.toString()}`, {
-      headers: yahooHeaders(env),
-    });
-    const text = await response.text();
+    const response = await fetch(
+      `${STOCKANALYSIS_STOCK_URL}/${encodeURIComponent(symbol.toLowerCase())}/financials/ratios/?p=quarterly`,
+      {
+        headers: htmlHeaders(env),
+      },
+    );
+    const html = await response.text();
 
     if (!response.ok) {
-      throw new Error(`Yahoo Finance 핵심지표 조회 실패: HTTP ${response.status}`);
+      throw new Error(`Stock Analysis 비율 페이지 조회 실패: HTTP ${response.status}`);
     }
-    if (!text) {
-      throw new Error(`Yahoo Finance 핵심지표 응답이 비어 있습니다. symbol=${symbol}`);
-    }
-
-    const data = JSON.parse(text);
-    const result = data?.quoteSummary?.result?.[0];
-    if (!result) {
-      throw new Error(`Yahoo Finance 핵심지표 데이터가 비어 있습니다. symbol=${symbol}`);
+    if (!html) {
+      throw new Error(`Stock Analysis 비율 페이지 응답이 비어 있습니다. symbol=${symbol}`);
     }
 
-    return result;
+    return html;
   });
 }
 
-function buildYahooStockFallback(summary, selectedMeta) {
-  const price = summary?.price ?? {};
-  const summaryDetail = summary?.summaryDetail ?? {};
-  const financialData = summary?.financialData ?? {};
-  const defaultKeyStatistics = summary?.defaultKeyStatistics ?? {};
-  const assetProfile = summary?.assetProfile ?? {};
+function extractStockAnalysisRowValues(html, label) {
+  const marker = `>${label}<`;
+  const index = html.indexOf(marker);
+  if (index === -1) return [];
 
-  const latestPrice = getRawNumber(price.regularMarketPrice);
-  const latestMetrics = {
-    per: round(getRawNumber(summaryDetail.trailingPE)),
-    pbr: round(getRawNumber(defaultKeyStatistics.priceToBook) ?? getRawNumber(summaryDetail.priceToBook)),
-    roe: round(getRawNumber(financialData.returnOnEquity) != null ? getRawNumber(financialData.returnOnEquity) * 100 : null),
-    roic: null,
-    operatingMargin:
-      round(getRawNumber(financialData.operatingMargins) != null ? getRawNumber(financialData.operatingMargins) * 100 : null),
-    debtRatio: round(getRawNumber(financialData.debtToEquity)),
-    dividendYield:
-      round(getRawNumber(summaryDetail.dividendYield) != null ? getRawNumber(summaryDetail.dividendYield) * 100 : null),
+  const rowStart = html.lastIndexOf("<tr", index);
+  const rowEnd = html.indexOf("</tr>", index);
+  if (rowStart === -1 || rowEnd === -1) return [];
+
+  const rowHtml = html.slice(rowStart, rowEnd);
+  return [...rowHtml.matchAll(/<td[^>]*class="svelte-11zo0q0"[^>]*>([\s\S]*?)<\/td>/g)]
+    .map((match) => stripTags(match[1]))
+    .filter(Boolean);
+}
+
+function extractStockAnalysisFirstValue(html, label) {
+  return extractStockAnalysisRowValues(html, label)[0] ?? null;
+}
+
+async function fetchStockAnalysisRatioFallback(symbol, env) {
+  const html = await fetchStockAnalysisRatiosPage(symbol, env);
+  const debtEquity = toNumber(extractStockAnalysisFirstValue(html, "Debt / Equity Ratio"));
+
+  return {
+    per: toNumber(extractStockAnalysisFirstValue(html, "PE Ratio")),
+    pbr: toNumber(extractStockAnalysisFirstValue(html, "PB Ratio")),
+    roe: toNumber(extractStockAnalysisFirstValue(html, "Return on Equity (ROE)")),
+    roic: toNumber(extractStockAnalysisFirstValue(html, "Return on Invested Capital (ROIC)")),
+    debtRatio: debtEquity != null ? debtEquity * 100 : null,
   };
+}
+
+function buildRateLimitedStockFallback({
+  selectedMeta,
+  selectedName,
+  code,
+  quote,
+  profile,
+  priceHistory,
+  incomeReports,
+  balanceReports,
+  scrapedMetrics,
+}) {
+  const today = new Date().toISOString().slice(0, 10);
+  const latestPrice = toNumber(quote.price) ?? findPriceOnOrBefore(priceHistory, today);
+  const latestIncome = incomeReports[0] ?? null;
+  const latestBalance = balanceReports[0] ?? null;
+  const operatingMargin =
+    latestIncome && toNumber(latestIncome.operatingIncome) != null && toNumber(latestIncome.revenue) != null
+      ? percent(toNumber(latestIncome.operatingIncome), toNumber(latestIncome.revenue))
+      : null;
+  const computedDebtRatio =
+    latestBalance && toNumber(latestBalance.totalLiabilities) != null && toNumber(latestBalance.totalStockholdersEquity) != null
+      ? percent(toNumber(latestBalance.totalLiabilities), toNumber(latestBalance.totalStockholdersEquity))
+      : latestBalance && toNumber(latestBalance.totalLiabilities) != null && toNumber(latestBalance.totalEquity) != null
+        ? percent(toNumber(latestBalance.totalLiabilities), toNumber(latestBalance.totalEquity))
+        : null;
+  const latestDividendPerShare = toNumber(profile.lastDiv) ?? toNumber(quote.dividend) ?? null;
 
   return {
     stock: {
       code: selectedMeta.code,
-      name: selectedMeta.name,
+      name: selectedName || selectedMeta.name || code,
       market: "US",
       marketLabel: "미국 주식",
-      industry: assetProfile.industry || selectedMeta.exchange,
+      industry: profile.industry || selectedMeta.exchange,
       assetType: "Stock",
       description: `${selectedMeta.exchange} 상장 · 최신 가격 ${latestPrice != null ? `$${latestPrice.toFixed(2)}` : "조회 불가"}`,
-      metrics: latestMetrics,
+      metrics: {
+        per: round(scrapedMetrics?.per ?? toNumber(quote.pe)),
+        pbr: round(scrapedMetrics?.pbr),
+        roe: round(scrapedMetrics?.roe),
+        roic: round(scrapedMetrics?.roic),
+        operatingMargin: round(operatingMargin),
+        debtRatio: round(scrapedMetrics?.debtRatio ?? computedDebtRatio),
+        dividendYield: round(
+          latestDividendPerShare != null && latestPrice != null ? (latestDividendPerShare / latestPrice) * 100 : null,
+        ),
+      },
       metricDefinitions,
     },
     history: [],
     summaryNote:
-      "FMP 분기 재무 호출이 제한되어 Yahoo Finance 핵심지표 fallback으로 현재 수치 중심 분석을 표시합니다.",
+      "FMP 분기 재무 호출이 제한되어 현재 시점 기준 보조 소스로 핵심지표를 복구했습니다. 분기 히스토리는 일시적으로 비어 있을 수 있습니다.",
     notes: [
-      "현재 응답은 Yahoo Finance의 현재 핵심지표 fallback입니다.",
-      "ROIC와 최근 1년 분기 흐름은 분기 재무 원천이 제한될 때 비어 있을 수 있습니다.",
-      "FMP 호출 제한이 해소되면 분기 히스토리와 함께 더 상세한 계산값으로 다시 표시됩니다.",
+      "현재 응답은 FMP 429 제한 시 보조 소스로 복구한 핵심지표입니다.",
+      "PE·PB·ROE·ROIC·부채비율은 Stock Analysis 공개 분기 비율 페이지를 우선 사용합니다.",
+      "영업이익률과 배당수익률은 FMP에서 남아 있는 가격·프로필·손익 데이터로 보완 계산합니다.",
+      "FMP 호출 제한이 해소되면 최근 1년 분기 흐름이 다시 함께 표시됩니다.",
     ],
     sources: [
-      { label: "Yahoo Finance Quote Summary", url: `https://finance.yahoo.com/quote/${encodeURIComponent(selectedMeta.code)}` },
+      { label: "Stock Analysis Financial Ratios", url: `${STOCKANALYSIS_STOCK_URL}/${encodeURIComponent(code.toLowerCase())}/financials/ratios/?p=quarterly` },
       { label: "SEC Company Tickers Exchange", url: "https://www.sec.gov/file/company-tickers-exchange" },
     ],
   };
@@ -677,11 +731,23 @@ export async function getUSStockData(code, env, selectedName = "") {
     );
 
   if (!quarterlyReports.length && hasRateLimit) {
-    const yahooSummary = await yahooQuoteSummaryFetch(code, env);
-    return buildYahooStockFallback(yahooSummary, {
-      code: selectedMeta.code,
-      name: selectedName || selectedMeta.name || code,
-      exchange: selectedMeta.exchange || "미국 주식",
+    let scrapedMetrics = null;
+    try {
+      scrapedMetrics = await fetchStockAnalysisRatioFallback(code, env);
+    } catch {
+      scrapedMetrics = null;
+    }
+
+    return buildRateLimitedStockFallback({
+      selectedMeta,
+      selectedName,
+      code,
+      quote,
+      profile,
+      priceHistory,
+      incomeReports,
+      balanceReports,
+      scrapedMetrics,
     });
   }
 
