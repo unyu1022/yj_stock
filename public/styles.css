@@ -112,30 +112,6 @@ body {
   border-color: rgba(29, 79, 114, 0.35);
 }
 
-.search-input-row {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 10px;
-  align-items: center;
-}
-
-.clear-search-button {
-  border: 1px solid rgba(20, 32, 51, 0.12);
-  border-radius: 16px;
-  width: 48px;
-  height: 48px;
-  background: #ffffff;
-  color: var(--ink);
-  font-size: 1.4rem;
-  line-height: 1;
-  cursor: pointer;
-}
-
-.clear-search-button:focus {
-  outline: 2px solid rgba(29, 79, 114, 0.22);
-  border-color: rgba(29, 79, 114, 0.35);
-}
-
 .search-results {
   display: grid;
   gap: 8px;
