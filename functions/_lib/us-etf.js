@@ -320,7 +320,7 @@ function extractYahooSummaryFromHtml(html) {
 }
 
 function extractJsonStringField(text, key) {
-  const regex = new RegExp(`"${key}":"((?:\\\\.|[^"\\\\])*)"`);
+  const regex = new RegExp(`"${key}":"((?:\\.|[^"\\])*)"`);
   const match = text.match(regex);
   if (!match) return null;
   try {
@@ -331,13 +331,13 @@ function extractJsonStringField(text, key) {
 }
 
 function extractJsonNumber(text, key) {
-  const regex = new RegExp(`"${key}":\\{"raw":(-?\\d+(?:\\.\\d+)?)`);
+  const regex = new RegExp(`"${key}":\{"raw":(-?\d+(?:\.\d+)?)`);
   const match = text.match(regex);
   return match ? Number(match[1]) : null;
 }
 
 function extractJsonFmt(text, key) {
-  const regex = new RegExp(`"${key}":\\{[^}]*"fmt":"((?:\\\\.|[^"\\\\])*)"`);
+  const regex = new RegExp(`"${key}":\{[^}]*"fmt":"((?:\\.|[^"\\])*)"`);
   const match = text.match(regex);
   if (!match) return null;
   try {
@@ -544,6 +544,7 @@ async function fetchStockAnalysisEtfData(code, env) {
       categoryName,
       legalType: "ETF",
       longName: null,
+      holdingsCount: extractStockAnalysisCellValue(overviewHtml, "Holdings"),
     },
     holdings,
     sectorWeights: [],
@@ -581,24 +582,36 @@ async function fetchYahooEtfData(code, env) {
 function buildEtfDetailCards(info) {
   return [
     {
-      label: "Expense Ratio",
+      key: "expenseRatio",
+      label: "운용보수",
       value: firstDefined(info.expenseRatioLabel, info.expenseRatio != null ? `${round(info.expenseRatio, 2)}%` : null, "-"),
-      description: "Total annual fund expense ratio.",
+      rawValue: info.expenseRatio,
+      kind: "percent",
+      description: "ETF가 매년 부담하는 총 보수 비율입니다.",
     },
     {
-      label: "Dividend Yield",
+      key: "dividendYield",
+      label: "배당수익률",
       value: firstDefined(info.dividendYieldLabel, info.dividendYield != null ? `${round(info.dividendYield, 2)}%` : null, "-"),
-      description: "Most recent trailing dividend yield.",
+      rawValue: info.dividendYield,
+      kind: "percent",
+      description: "최근 기준 trailing 배당수익률입니다.",
     },
     {
-      label: "Assets",
+      key: "assetsUnderManagement",
+      label: "순자산 규모",
       value: firstDefined(info.assetsUnderManagementLabel, formatCompactCurrency(info.assetsUnderManagement), "-"),
-      description: "Assets under management.",
+      rawValue: info.assetsUnderManagement,
+      kind: "money",
+      description: "ETF 전체 운용 자산 규모입니다.",
     },
     {
-      label: "Last Price",
+      key: "lastPrice",
+      label: "최근 가격",
       value: firstDefined(info.latestPriceLabel, info.latestPrice != null ? `$${round(info.latestPrice, 2)}` : null, info.navLabel, "-"),
-      description: "Latest market price.",
+      rawValue: info.latestPrice,
+      kind: "money",
+      description: "최근 시장 가격 기준입니다.",
     },
   ];
 }
@@ -697,10 +710,10 @@ export async function getUSEtfData(code, env, selectedName = "") {
       code,
       name: displayName,
       market: "US",
-      marketLabel: "US Stock",
+      marketLabel: "미국 시장",
       industry: category,
       assetType: "ETF",
-      description: `${category}${provider ? ` · ${provider}` : ""}${latestPrice != null ? ` · Last price $${round(latestPrice, 2)}` : ""}`,
+      description: `${category}${provider ? ` · ${provider}` : ""}${latestPrice != null ? ` · 최근 가격 $${round(latestPrice, 2)}` : ""}`,
       metrics: {
         expenseRatio: mergedInfo.expenseRatio,
         dividendYield: mergedInfo.dividendYield,
@@ -713,11 +726,11 @@ export async function getUSEtfData(code, env, selectedName = "") {
       sectorWeights,
     },
     history: [],
-    summaryNote: "For ETFs, fund structure matters more than company statements. Expense ratio, dividend yield, assets, holdings, and sector weights are the key items to read together.",
+    summaryNote: "ETF는 개별 기업 재무제표보다 펀드 구조가 더 중요합니다. 운용보수, 배당수익률, 순자산 규모, 상위 보유 종목, 섹터 비중을 함께 읽는 것이 핵심입니다.",
     notes: [
-      "Leveraged ETFs can diverge from the simple index multiple over longer holding periods because of compounding and volatility drag.",
-      "Expense ratio and dividend yield can differ slightly by data vendor and update timing.",
-      "Top holdings and sector weights help show which theme and risk concentration the ETF is actually carrying.",
+      "레버리지 ETF는 복리 효과와 변동성 드래그 때문에 장기 보유 시 기초지수 단순 배수와 다른 성과가 나올 수 있습니다.",
+      "운용보수와 배당수익률은 데이터 제공처와 업데이트 시점에 따라 조금씩 다를 수 있습니다.",
+      "상위 보유 종목과 섹터 비중을 같이 보면 ETF가 실제로 어떤 테마와 집중 위험을 담고 있는지 파악하기 쉽습니다.",
     ],
     sources: [
       { label: "Stock Analysis ETF Overview", url: `${STOCKANALYSIS_ETF_URL}/${encodeURIComponent(code.toLowerCase())}/` },
