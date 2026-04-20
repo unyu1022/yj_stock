@@ -815,28 +815,44 @@ function buildSourceList(code) {
   ];
 }
 
+function summarizeSourceError(error) {
+  if (!error) return "ok";
+  const message = String(error.message || error);
+  if (message.includes("Thank you for using Alpha Vantage")) return "Alpha Vantage rate limit";
+  if (message.includes("HTTP 402")) return "plan limit (402)";
+  if (message.includes("HTTP 403")) return "access denied (403)";
+  if (message.length > 120) return `${message.slice(0, 117)}...`;
+  return message;
+}
+
 export async function getUSEtfData(code, env, selectedName = "") {
   let alphaVantageData = null;
+  let alphaVantageError = null;
   try {
     alphaVantageData = normalizeAlphaVantageEtfProfile(
       await alphaVantageFetch({ function: "ETF_PROFILE", symbol: code }, env),
     );
-  } catch {
+  } catch (error) {
     alphaVantageData = null;
+    alphaVantageError = error;
   }
 
   let stockAnalysisData = null;
+  let stockAnalysisError = null;
   try {
     stockAnalysisData = await fetchStockAnalysisEtfData(code, env);
-  } catch {
+  } catch (error) {
     stockAnalysisData = null;
+    stockAnalysisError = error;
   }
 
   let yahooData = null;
+  let yahooError = null;
   try {
     yahooData = await fetchYahooEtfData(code, env);
-  } catch {
+  } catch (error) {
     yahooData = null;
+    yahooError = error;
   }
 
   const [quoteResult, profileResult, infoResult, holdingsResult, sectorResult] = await Promise.allSettled([
@@ -852,6 +868,9 @@ export async function getUSEtfData(code, env, selectedName = "") {
   const infoData = infoResult.status === "fulfilled" ? infoResult.value : [];
   const holdingsData = holdingsResult.status === "fulfilled" ? holdingsResult.value : [];
   const sectorData = sectorResult.status === "fulfilled" ? sectorResult.value : [];
+  const fmpInfoError = infoResult.status === "rejected" ? infoResult.reason : null;
+  const fmpHoldingsError = holdingsResult.status === "rejected" ? holdingsResult.reason : null;
+  const fmpSectorsError = sectorResult.status === "rejected" ? sectorResult.reason : null;
 
   const quote = Array.isArray(quoteData) ? quoteData[0] ?? {} : quoteData ?? {};
   const profile = Array.isArray(profileData) ? profileData[0] ?? {} : profileData ?? {};
@@ -917,6 +936,22 @@ export async function getUSEtfData(code, env, selectedName = "") {
     code,
   );
 
+  const sourceStatus = [
+    `Alpha Vantage ETF_PROFILE: ${alphaVantageData ? "ok" : summarizeSourceError(alphaVantageError || "unavailable")}`,
+    `Stock Analysis overview/holdings: ${stockAnalysisData ? "ok" : summarizeSourceError(stockAnalysisError || "unavailable")}`,
+    `Yahoo ETF page: ${yahooData ? "ok" : summarizeSourceError(yahooError || "unavailable")}`,
+    `FMP ETF info: ${fmpInfoError ? summarizeSourceError(fmpInfoError) : "ok"}`,
+    `FMP ETF holdings: ${fmpHoldingsError ? summarizeSourceError(fmpHoldingsError) : "ok"}`,
+    `FMP ETF sector weights: ${fmpSectorsError ? summarizeSourceError(fmpSectorsError) : "ok"}`,
+  ];
+
+  const hasSparseEtfData =
+    mergedInfo.expenseRatio == null &&
+    mergedInfo.dividendYield == null &&
+    mergedInfo.assetsUnderManagement == null &&
+    holdings.length === 0 &&
+    sectorWeights.length === 0;
+
   return {
     stock: {
       code,
@@ -943,6 +978,9 @@ export async function getUSEtfData(code, env, selectedName = "") {
       "레버리지 ETF는 복리 효과와 변동성 드래그 때문에 장기 보유 시 기초지수 단순 배수와 다른 성과가 나올 수 있습니다.",
       "운용보수와 배당수익률은 데이터 제공처와 업데이트 시점에 따라 조금씩 다를 수 있습니다.",
       "상위 보유 종목과 섹터 비중을 같이 보면 ETF가 실제로 어떤 테마와 집중 위험을 담고 있는지 파악하기 쉽습니다.",
+      ...(hasSparseEtfData
+        ? ["ETF 상세 소스 진단: " + sourceStatus.join(" | ")]
+        : []),
     ],
     sources: [
       { label: "Stock Analysis ETF Overview", url: `${STOCKANALYSIS_ETF_URL}/${encodeURIComponent(code.toLowerCase())}/` },
