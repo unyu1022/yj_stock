@@ -27,10 +27,6 @@ const ui = {
   backtestNotes: document.querySelector("#backtestNotes"),
 };
 
-function isEtf(stock) {
-  return stock?.assetType === "ETF";
-}
-
 function formatMetric(value, format) {
   if (value == null || Number.isNaN(value)) return "-";
   if (format === "text") return String(value);
@@ -42,6 +38,188 @@ function formatDelta(delta, format) {
   if (format === "text") return "-";
   const sign = delta > 0 ? "+" : "";
   return format === "%" ? `${sign}${delta.toFixed(1)}%p` : `${sign}${delta.toFixed(2)}x`;
+}
+
+function isEtf(stock) {
+  return stock?.assetType === "ETF";
+}
+
+function getFxRate() {
+  return state.stockData?.fx?.rate ?? null;
+}
+
+function formatKrw(value) {
+  if (value == null || Number.isNaN(value)) return "-";
+  return new Intl.NumberFormat("ko-KR", {
+    style: "currency",
+    currency: "KRW",
+    maximumFractionDigits: 0,
+  }).format(value);
+}
+
+function formatUsd(value) {
+  if (value == null || Number.isNaN(value)) return "-";
+  return new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: "USD",
+    maximumFractionDigits: value >= 100 ? 0 : 2,
+  }).format(value);
+}
+
+function buildEtfDisplayValue(item) {
+  const fxRate = getFxRate();
+  if (!item || item.rawValue == null || Number.isNaN(item.rawValue)) {
+    return item?.value ?? "-";
+  }
+
+  if (item.kind === "money" && fxRate) {
+    return `${formatUsd(item.rawValue)}\n${formatKrw(item.rawValue * fxRate)}`;
+  }
+
+  return item.value ?? "-";
+}
+
+function renderEtfMetrics(stock) {
+  const details = Array.isArray(stock.etfDetails) ? stock.etfDetails : [];
+  ui.metricGrid.innerHTML = details
+    .map(
+      (item) => `
+        <article class="metric-card">
+          <div class="metric-topline">
+            <div>
+              <p class="section-kicker">ETF</p>
+              <h3>${item.label}</h3>
+            </div>
+            <span class="metric-tag tag-value" style="white-space:pre-line">${buildEtfDisplayValue(item)}</span>
+          </div>
+          <div class="insight warn">
+            ${item.description ?? ""}
+          </div>
+        </article>
+      `,
+    )
+    .join("");
+}
+
+function renderEtfBreakdown(stock) {
+  const holdings = Array.isArray(stock.holdings) ? stock.holdings : [];
+  const sectors = Array.isArray(stock.sectorWeights) ? stock.sectorWeights : [];
+
+  const holdingsHtml = holdings.length
+    ? holdings
+        .map(
+          (item) => `
+            <div class="pair">
+              <dt>${item.name}${item.symbol ? ` (${item.symbol})` : ""}</dt>
+              <dd>${item.weight != null ? `${item.weight.toFixed(2)}%` : "-"}</dd>
+            </div>
+          `,
+        )
+        .join("")
+    : `<div class="empty-state">보유종목 데이터를 제공하지 않습니다.</div>`;
+
+  const sectorsHtml = sectors.length
+    ? sectors
+        .map(
+          (item) => `
+            <div class="pair">
+              <dt>${item.name}</dt>
+              <dd>${item.weight != null ? `${item.weight.toFixed(2)}%` : "-"}</dd>
+            </div>
+          `,
+        )
+        .join("")
+    : `<div class="empty-state">섹터 비중 데이터를 제공하지 않습니다.</div>`;
+
+  ui.quarterlyTrend.innerHTML = `
+    <article class="quarter-card">
+      <div class="quarter-head">
+        <h3>상위 보유종목</h3>
+        <span class="metric-tag tag-muted">Top Holdings</span>
+      </div>
+      <dl class="quarter-list">${holdingsHtml}</dl>
+    </article>
+    <article class="quarter-card">
+      <div class="quarter-head">
+        <h3>섹터 비중</h3>
+        <span class="metric-tag tag-muted">Sector Weights</span>
+      </div>
+      <dl class="quarter-list">${sectorsHtml}</dl>
+    </article>
+  `;
+}
+
+function renderEtfBreakdownLocalized(stock) {
+  const holdings = Array.isArray(stock.holdings) ? stock.holdings : [];
+  const sectors = Array.isArray(stock.sectorWeights) ? stock.sectorWeights : [];
+
+  const holdingsHtml = holdings.length
+    ? holdings
+        .map(
+          (item) => `
+            <div class="pair">
+              <dt>${item.name}${item.symbol ? ` (${item.symbol})` : ""}</dt>
+              <dd>${item.weight != null ? `${item.weight.toFixed(2)}%` : "-"}</dd>
+            </div>
+          `,
+        )
+        .join("")
+    : `<div class="empty-state">보유 종목 데이터를 받지 못했습니다.</div>`;
+
+  const sectorsHtml = sectors.length
+    ? sectors
+        .map(
+          (item) => `
+            <div class="pair">
+              <dt>${item.name}</dt>
+              <dd>${item.weight != null ? `${item.weight.toFixed(2)}%` : "-"}</dd>
+            </div>
+          `,
+        )
+        .join("")
+    : `<div class="empty-state">섹터 비중 데이터를 받지 못했습니다.</div>`;
+
+  ui.quarterlyTrend.innerHTML = `
+    <article class="quarter-card">
+      <div class="quarter-head">
+        <h3>상위 보유 종목</h3>
+        <span class="metric-tag tag-muted">Top Holdings</span>
+      </div>
+      <dl class="quarter-list">${holdingsHtml}</dl>
+    </article>
+    <article class="quarter-card">
+      <div class="quarter-head">
+        <h3>섹터 비중</h3>
+        <span class="metric-tag tag-muted">Sector Weights</span>
+      </div>
+      <dl class="quarter-list">${sectorsHtml}</dl>
+    </article>
+  `;
+}
+
+function renderEtfInsightSummary(stock, summaryNote, sources) {
+  const fx = state.stockData?.fx;
+  ui.insightSummary.classList.remove("empty-state");
+  ui.insightSummary.innerHTML = `
+    <article class="summary-card">
+      <p class="section-kicker">ETF 요약</p>
+      <h3>${stock.name} ETF 요약</h3>
+      <p>${summaryNote}</p>
+    </article>
+    <article class="summary-card">
+      <p class="section-kicker">환율</p>
+      <h3>실시간 환율</h3>
+      <p>${fx?.rate ? `1 USD = ${fx.rate.toFixed(2)} KRW` : "환율 데이터를 불러오지 못했습니다."}</p>
+      <p>${fx?.updatedAt ? `기준 시각: ${fx.updatedAt}` : ""}</p>
+    </article>
+    <article class="summary-card">
+      <p class="section-kicker">출처</p>
+      <h3>데이터 출처</h3>
+      <ul class="source-list">
+        ${sources.map((source) => `<li><a href="${source.url}" target="_blank" rel="noreferrer">${source.label}</a></li>`).join("")}
+      </ul>
+    </article>
+  `;
 }
 
 function evaluateMetric(key, value) {
@@ -154,28 +332,13 @@ function renderSelection(stock) {
   ui.selectionSummary.innerHTML = `
     <strong>${stock.name} (${stock.code})</strong>
     <small>${stock.marketLabel} · ${stock.industry ?? "업종 정보 없음"}</small>
-    <small>${stock.description ?? "실데이터를 기반으로 최신 지표를 조회합니다."}</small>
+    <small>${stock.description ?? "실데이터를 기반으로 최신 재무 지표를 조회합니다."}</small>
   `;
 }
 
 function renderInsightSummary(stock, history, summaryNote, sources) {
-  ui.insightSummary.classList.remove("empty-state");
-
   if (isEtf(stock)) {
-    ui.insightSummary.innerHTML = `
-      <article class="summary-card">
-        <p class="section-kicker">ETF View</p>
-        <h3>${stock.name} ETF 요약</h3>
-        <p>${summaryNote}</p>
-      </article>
-      <article class="summary-card">
-        <p class="section-kicker">Source</p>
-        <h3>데이터 출처</h3>
-        <ul class="source-list">
-          ${(sources ?? []).map((source) => `<li><a href="${source.url}" target="_blank" rel="noreferrer">${source.label}</a></li>`).join("")}
-        </ul>
-      </article>
-    `;
+    renderEtfInsightSummary(stock, summaryNote, sources);
     return;
   }
 
@@ -187,6 +350,7 @@ function renderInsightSummary(stock, history, summaryNote, sources) {
     `영업이익률 ${formatMetric(stock.metrics.operatingMargin, "%")}`,
   ];
 
+  ui.insightSummary.classList.remove("empty-state");
   ui.insightSummary.innerHTML = `
     <article class="summary-card">
       <p class="section-kicker">Current View</p>
@@ -202,30 +366,10 @@ function renderInsightSummary(stock, history, summaryNote, sources) {
       <p class="section-kicker">Source</p>
       <h3>데이터 출처</h3>
       <ul class="source-list">
-        ${(sources ?? []).map((source) => `<li><a href="${source.url}" target="_blank" rel="noreferrer">${source.label}</a></li>`).join("")}
+        ${sources.map((source) => `<li><a href="${source.url}" target="_blank" rel="noreferrer">${source.label}</a></li>`).join("")}
       </ul>
     </article>
   `;
-}
-
-function renderEtfMetrics(stock) {
-  const details = Array.isArray(stock.etfDetails) ? stock.etfDetails : [];
-  ui.metricGrid.innerHTML = details
-    .map(
-      (item) => `
-        <article class="metric-card">
-          <div class="metric-topline">
-            <div>
-              <p class="section-kicker">ETF</p>
-              <h3>${item.label}</h3>
-            </div>
-            <span class="metric-tag tag-value">${item.value ?? "-"}</span>
-          </div>
-          <div class="insight warn">${item.description ?? ""}</div>
-        </article>
-      `,
-    )
-    .join("");
 }
 
 function renderMetrics(stock, history) {
@@ -261,65 +405,21 @@ function renderMetrics(stock, history) {
               <dd>${formatDelta(trend.delta, metric.format)}</dd>
             </div>
           </dl>
-          <div class="insight ${evaluation.tone}">${evaluation.text}</div>
-          <div class="insight ${trendTone}">${trend.sentence}</div>
+          <div class="insight ${evaluation.tone}">
+            ${evaluation.text}
+          </div>
+          <div class="insight ${trendTone}">
+            ${trend.sentence}
+          </div>
         </article>
       `;
     })
     .join("");
 }
 
-function renderEtfBreakdown(stock) {
-  const holdings = Array.isArray(stock.holdings) ? stock.holdings : [];
-  const sectors = Array.isArray(stock.sectorWeights) ? stock.sectorWeights : [];
-
-  const holdingsHtml = holdings.length
-    ? holdings
-        .map(
-          (item) => `
-            <div class="pair">
-              <dt>${item.name}${item.symbol ? ` (${item.symbol})` : ""}</dt>
-              <dd>${item.weight != null ? `${item.weight.toFixed(2)}%` : "-"}</dd>
-            </div>
-          `,
-        )
-        .join("")
-    : `<div class="empty-state">보유종목 데이터를 제공하지 않습니다.</div>`;
-
-  const sectorsHtml = sectors.length
-    ? sectors
-        .map(
-          (item) => `
-            <div class="pair">
-              <dt>${item.name}</dt>
-              <dd>${item.weight != null ? `${item.weight.toFixed(2)}%` : "-"}</dd>
-            </div>
-          `,
-        )
-        .join("")
-    : `<div class="empty-state">섹터 비중 데이터를 제공하지 않습니다.</div>`;
-
-  ui.quarterlyTrend.innerHTML = `
-    <article class="quarter-card">
-      <div class="quarter-head">
-        <h3>상위 보유종목</h3>
-        <span class="metric-tag tag-muted">Top Holdings</span>
-      </div>
-      <dl class="quarter-list">${holdingsHtml}</dl>
-    </article>
-    <article class="quarter-card">
-      <div class="quarter-head">
-        <h3>섹터 비중</h3>
-        <span class="metric-tag tag-muted">Sector Weights</span>
-      </div>
-      <dl class="quarter-list">${sectorsHtml}</dl>
-    </article>
-  `;
-}
-
 function renderQuarterlyTrend(history, metricDefinitions) {
   if (isEtf(state.selectedStock)) {
-    renderEtfBreakdown(state.selectedStock);
+    renderEtfBreakdownLocalized(state.selectedStock);
     return;
   }
 
@@ -342,7 +442,9 @@ function renderQuarterlyTrend(history, metricDefinitions) {
             <h3>${quarter.label}</h3>
             <span class="metric-tag tag-muted">${quarter.headline}</span>
           </div>
-          <dl class="quarter-list">${pairs}</dl>
+          <dl class="quarter-list">
+            ${pairs}
+          </dl>
         </article>
       `;
     })
@@ -350,12 +452,12 @@ function renderQuarterlyTrend(history, metricDefinitions) {
 }
 
 function renderNotes(notes) {
-  ui.notesList.innerHTML = (notes ?? []).map((note) => `<li>${note}</li>`).join("");
+  ui.notesList.innerHTML = notes.map((note) => `<li>${note}</li>`).join("");
 }
 
 function renderBacktestTarget(stock) {
   if (!stock) {
-    ui.backtestTarget.textContent = "아직 종목이 선택되지 않았습니다. 먼저 미국 주식 또는 ETF를 선택하세요.";
+    ui.backtestTarget.textContent = "아직 종목이 선택되지 않았습니다. 먼저 미국 주식 종목을 선택하세요.";
     return;
   }
 
@@ -441,7 +543,7 @@ function renderBacktestSummary(data) {
       <p>매매 전환 횟수 ${stock.trades ?? 0}회</p>
     </article>
     <article class="summary-card">
-      <p class="section-kicker">Selected Asset</p>
+      <p class="section-kicker">Selected Stock</p>
       <h3>${data.stock.name} (${data.stock.code})</h3>
       <p>누적수익률 ${stock.totalReturn}% · CAGR ${stock.cagr}%</p>
       <p>${stock.startDate} 시작, ${stock.endDate} 종료 기준입니다.</p>
@@ -466,7 +568,7 @@ async function runBacktest() {
   if (!state.selectedStock?.code) {
     renderBacktestIdleState();
     ui.backtestSummary.classList.remove("empty-state");
-    ui.backtestSummary.innerHTML = `<div class="error-card">먼저 미국 주식 또는 ETF를 선택하세요.</div>`;
+    ui.backtestSummary.innerHTML = `<div class="error-card">먼저 미국 주식 종목을 선택하세요.</div>`;
     return;
   }
 
@@ -486,7 +588,6 @@ async function runBacktest() {
     if (state.selectedStock.assetType) {
       params.set("assetType", state.selectedStock.assetType);
     }
-
     const data = await fetchJson(`/api/backtest?${params.toString()}`);
     renderBacktestSummary(data);
     renderBacktestChart(data);
@@ -613,14 +714,8 @@ async function loadSearchResults(query) {
     const merged = new Map();
     [...localMatches, ...(remote.items ?? [])].forEach((item) => {
       const key = item.code;
-      const current = merged.get(key);
-      if (!current) {
-        merged.set(key, item);
-        return;
-      }
-      if ((current.assetType !== "ETF" && item.assetType === "ETF") || (!current.exchange && item.exchange)) {
-        merged.set(key, item);
-      }
+      if (!key || merged.has(key)) return;
+      merged.set(key, item);
     });
     renderSearchResults([...merged.values()].slice(0, 20), query);
   } catch (error) {
@@ -653,7 +748,7 @@ async function loadStock(code, name = "", assetType = "") {
     renderSelection(data.stock);
     renderInsightSummary(data.stock, data.history, data.summaryNote, data.sources);
     renderMetrics(data.stock, data.history);
-    renderQuarterlyTrend(data.history, data.stock.metricDefinitions ?? []);
+    renderQuarterlyTrend(data.history, data.stock.metricDefinitions);
     renderNotes(data.notes);
     renderBacktestTarget(data.stock);
     renderBacktestIdleState();
@@ -736,8 +831,7 @@ function registerServiceWorker() {
 async function boot() {
   renderNotes([
     "미국 종목 검색은 SEC 종목 마스터와 FMP ETF 목록을 합쳐 즉시 필터링합니다.",
-    "일반 주식은 분기 재무와 가격 데이터를 기준으로 7개 핵심 지표를 계산합니다.",
-    "ETF는 재무제표 대신 운용보수, 배당수익률, 보유종목 구성, 섹터 비중을 우선 표시합니다.",
+    "재무제표 탭은 FMP 분기 재무와 가격 데이터를 기준으로 핵심 지표를 계산합니다.",
     "백테스팅 탭은 추세 전환과 공포지수 전략을 NASDAQ Composite와 비교합니다.",
   ]);
   renderBacktestTarget(null);
