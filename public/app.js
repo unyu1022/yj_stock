@@ -9,6 +9,7 @@ const state = {
 
 const ui = {
   searchInput: document.querySelector("#stock-search"),
+  clearSearch: document.querySelector("#clear-search"),
   searchResults: document.querySelector("#search-results"),
   selectionSummary: document.querySelector("#selection-summary"),
   fxBanner: document.querySelector("#fxBanner"),
@@ -859,10 +860,16 @@ function renderIdleSearchState() {
   `;
 }
 
+function updateSearchClearButton() {
+  if (!ui.clearSearch) return;
+  ui.clearSearch.hidden = !Boolean(ui.searchInput?.value?.trim());
+}
+
 function resetSearchSelection() {
   state.selectedStock = null;
   state.stockData = null;
   ui.searchInput.value = "";
+  updateSearchClearButton();
   ui.selectionSummary.innerHTML = "";
   renderFxBanner();
   ui.insightSummary.classList.add("empty-state");
@@ -896,6 +903,7 @@ async function loadStock(code, name = "", assetType = "") {
     renderBacktestTarget(data.stock);
     renderBacktestIdleState();
     ui.searchInput.value = `${data.stock.name} (${data.stock.code})`;
+    updateSearchClearButton();
     renderIdleSearchState();
   } catch (error) {
     renderError(error.message);
@@ -904,6 +912,7 @@ async function loadStock(code, name = "", assetType = "") {
 
 function scheduleSearch(query) {
   clearTimeout(state.searchTimer);
+  updateSearchClearButton();
   if (!query) {
     renderIdleSearchState();
     return;
@@ -919,6 +928,11 @@ function scheduleSearch(query) {
 function attachEvents() {
   ui.searchInput.addEventListener("input", (event) => {
     scheduleSearch(event.target.value.trim());
+  });
+
+  ui.clearSearch?.addEventListener("click", () => {
+    resetSearchSelection();
+    ui.searchInput.focus();
   });
 
   document.body.addEventListener("click", (event) => {
@@ -982,6 +996,7 @@ async function boot() {
   renderFxBanner();
   setActiveTab("fundamentals");
   attachEvents();
+  updateSearchClearButton();
   renderIdleSearchState();
   registerServiceWorker();
   await ensureMasterData().catch(() => {});
