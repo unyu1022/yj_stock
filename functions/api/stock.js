@@ -1,6 +1,7 @@
 import { badRequest, json, serverError } from "../_lib/http.js";
 import { getUsdKrwRate } from "../_lib/fx.js";
 import { getKRStockData } from "../_lib/kr.js";
+import { fetchUSStockMetricFallback, mergeUSStockMetricFallback } from "../_lib/us-stock-fallback.js";
 import { getUSEtfData } from "../_lib/us-etf.js";
 import { getUSStockData } from "../_lib/us.js";
 
@@ -21,12 +22,28 @@ export async function onRequestGet(context) {
       return badRequest("code 파라미터가 필요합니다.");
     }
 
-    const payload =
+    let payload =
       market === "KR"
         ? await getKRStockData(code, context.env, corpCode, name)
         : assetType === "ETF"
           ? await getUSEtfData(code, context.env, name)
           : await getUSStockData(code, context.env, name);
+
+    if (market === "US" && payload?.stock?.assetType !== "ETF") {
+      const metrics = payload?.stock?.metrics ?? {};
+      const needsFallback = [metrics.roe, metrics.roic, metrics.operatingMargin, metrics.dividendYield].some(
+        (value) => value == null,
+      );
+
+      if (needsFallback) {
+        try {
+          const fallback = await fetchUSStockMetricFallback(code, context.env);
+          payload = mergeUSStockMetricFallback(payload, fallback);
+        } catch {
+          // Keep the primary payload when the auxiliary source is unavailable.
+        }
+      }
+    }
 
     const fx = market === "US" ? await getUsdKrwRate().catch(() => null) : null;
     return json({ ok: true, ...payload, fx });
