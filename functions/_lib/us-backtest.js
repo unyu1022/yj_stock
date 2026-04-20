@@ -339,7 +339,8 @@ async function loadMetaAndSeries(symbol, from, to, env) {
       };
     }
   } catch (error) {
-    if (error.status !== 402 && error.status !== 403) {
+    const status = error?.status;
+    if (status != null && ![402, 403, 429].includes(status)) {
       throw error;
     }
   }
