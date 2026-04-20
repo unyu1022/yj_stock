@@ -873,6 +873,7 @@ async function fetchStockAnalysisEtfData(code, env) {
       legalType: "ETF",
       longName: null,
       holdingsCount,
+      latestPriceSource: overviewFallback.latestPrice != null ? "Stock Analysis" : lastPriceLabel ? "Stock Analysis (fallback)" : null,
     },
     holdings,
     sectorWeights: scriptBreakdown.sectorWeights,
@@ -886,7 +887,10 @@ async function fetchYahooEtfData(code, env) {
   const structuredSummary = extractYahooEmbeddedSummary(html, code) || extractYahooSummaryFromHtml(html);
   if (structuredSummary) {
     return {
-      info: normalizeYahooEtfInfo(structuredSummary),
+      info: {
+        ...normalizeYahooEtfInfo(structuredSummary),
+        latestPriceSource: "Yahoo Finance",
+      },
       holdings: normalizeYahooHoldings(structuredSummary),
       sectorWeights: normalizeYahooSectorWeights(structuredSummary),
       summary: structuredSummary,
@@ -901,6 +905,7 @@ async function fetchYahooEtfData(code, env) {
     regexFallback.sectorWeights.length > 0;
 
   if (hasFallbackData) {
+    regexFallback.info.latestPriceSource = "Yahoo Finance (regex fallback)";
     return regexFallback;
   }
 
@@ -1017,9 +1022,14 @@ export async function getUSEtfData(code, env, selectedName = "") {
   const stockAnalysisInfo = stockAnalysisData?.info ?? {};
 
   const quotePrice = toNumber(quote.price);
-  const yahooPrice = firstDefined(yahooInfo.latestPrice, yahooInfo.nav);
-  const latestPrice = firstDefined(yahooPrice, quotePrice, fmpInfo.latestPrice, stockAnalysisInfo.latestPrice);
+  const latestPrice = firstDefined(stockAnalysisInfo.latestPrice, yahooInfo.latestPrice, yahooInfo.nav, quotePrice, fmpInfo.latestPrice);
   const latestPriceLabel = latestPrice != null ? `$${round(latestPrice, 2)}` : null;
+  const latestPriceSource = firstDefined(
+    stockAnalysisInfo.latestPrice != null ? stockAnalysisInfo.latestPriceSource || "Stock Analysis" : null,
+    yahooInfo.latestPrice != null || yahooInfo.nav != null ? yahooInfo.latestPriceSource || "Yahoo Finance" : null,
+    quotePrice != null ? "FMP Quote" : null,
+    fmpInfo.latestPrice != null ? "FMP ETF Info" : null,
+  );
   const mergedInfo = {
     expenseRatio: firstDefined(stockAnalysisInfo.expenseRatio, alphaInfo.expenseRatio, yahooInfo.expenseRatio, fmpInfo.expenseRatio),
     expenseRatioLabel: firstDefined(stockAnalysisInfo.expenseRatioLabel, alphaInfo.expenseRatioLabel, yahooInfo.expenseRatioLabel),
@@ -1031,6 +1041,7 @@ export async function getUSEtfData(code, env, selectedName = "") {
     navLabel: firstDefined(latestPriceLabel, stockAnalysisInfo.navLabel, yahooInfo.navLabel),
     latestPrice,
     latestPriceLabel,
+    latestPriceSource,
   };
 
   const holdings = alphaVantageData?.holdings?.length
@@ -1116,6 +1127,7 @@ export async function getUSEtfData(code, env, selectedName = "") {
       "레버리지 ETF는 복리 효과와 변동성 드래그 때문에 장기 보유 시 기초지수 단순 배수와 다른 성과가 나올 수 있습니다.",
       "운용보수와 배당수익률은 데이터 제공처와 업데이트 시점에 따라 조금씩 다를 수 있습니다.",
       "상위 보유 종목과 섹터 비중을 같이 보면 ETF가 실제로 어떤 테마와 집중 위험을 담고 있는지 파악하기 쉽습니다.",
+      ...(latestPriceSource ? [`최근 가격 소스: ${latestPriceSource}`] : []),
       ...(hasSparseEtfData
         ? ["ETF 상세 소스 진단: " + sourceStatus.join(" | ")]
         : []),
