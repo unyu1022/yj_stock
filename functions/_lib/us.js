@@ -5,6 +5,7 @@ const ONE_DAY = 24 * 60 * 60 * 1000;
 const HALF_DAY = 12 * 60 * 60 * 1000;
 const SEC_TICKERS_URL = "https://www.sec.gov/files/company_tickers_exchange.json";
 const FMP_BASE_URL = "https://financialmodelingprep.com/stable";
+const ETF_LIST_TTL = 6 * 60 * 60 * 1000;
 
 function secHeaders(env) {
   const contact = env.SEC_CONTACT_EMAIL || "admin@example.com";
@@ -112,10 +113,29 @@ async function loadUSTickers(env) {
   });
 }
 
+async function loadUSEtfList(env) {
+  if (!env.FMP_API_KEY) return [];
+
+  return remember("us-etf-list", ETF_LIST_TTL, async () => {
+    const rows = await fmpFetch("/etf-list", {}, env, ETF_LIST_TTL).catch(() => []);
+    return (Array.isArray(rows) ? rows : [])
+      .map((row) => ({
+        code: String(row.symbol || "").trim().toUpperCase(),
+        name: String(row.name || "").trim(),
+        market: "US",
+        marketLabel: "미국 주식",
+        exchange: String(row.exchange || row.exchangeShortName || "").trim(),
+        assetType: "ETF",
+      }))
+      .filter((item) => item.code && item.name);
+  });
+}
+
 export async function searchUSStocks(query, env) {
   const list = await loadUSTickers(env);
+  const etfList = await loadUSEtfList(env);
   const normalized = query.trim().toLowerCase();
-  const localMatches = (!normalized
+  const localStocks = (!normalized
     ? list.slice(0, 20)
     : list.filter(
         (item) =>
@@ -131,6 +151,21 @@ export async function searchUSStocks(query, env) {
     exchange: item.exchange,
     assetType: "Stock",
   }));
+
+  const localEtfs = (!normalized
+    ? etfList.slice(0, 20)
+    : etfList.filter(
+        (item) =>
+          item.code.toLowerCase().includes(normalized) ||
+          item.name.toLowerCase().includes(normalized) ||
+          item.exchange.toLowerCase().includes(normalized),
+      )
+  ).map((item) => ({
+    ...item,
+    assetType: "ETF",
+  }));
+
+  const localMatches = mergeSearchItems([...localEtfs, ...localStocks]);
 
   if (!normalized || !env.FMP_API_KEY) {
     return localMatches.slice(0, 20);
