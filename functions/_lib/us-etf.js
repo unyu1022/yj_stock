@@ -22,7 +22,7 @@ function yahooHeaders(env) {
 
 function ensureFmpKey(env) {
   if (!env.FMP_API_KEY) {
-    throw new Error("미국 주식/ETF 조회에는 FMP_API_KEY 환경변수가 필요합니다.");
+    throw new Error("FMP_API_KEY is required for US stock and ETF lookups.");
   }
   return env.FMP_API_KEY;
 }
@@ -39,24 +39,24 @@ async function fmpFetch(path, params, env, ttl = HALF_DAY) {
     const text = await response.text();
 
     if (!response.ok) {
-      const error = new Error(`FMP 조회 실패: HTTP ${response.status}`);
+      const error = new Error(`FMP request failed: HTTP ${response.status}`);
       error.status = response.status;
       throw error;
     }
 
     if (!text) {
-      throw new Error(`FMP 응답 본문이 비어 있습니다. path=${path}`);
+      throw new Error(`FMP response body is empty. path=${path}`);
     }
 
     let data;
     try {
       data = JSON.parse(text);
-    } catch (error) {
-      throw new Error(`FMP JSON 파싱 실패: path=${path}`);
+    } catch {
+      throw new Error(`FMP JSON parse failed: path=${path}`);
     }
 
     if (data?.["Error Message"]) throw new Error(data["Error Message"]);
-    if (data?.error) throw new Error(typeof data.error === "string" ? data.error : data.error.message || `FMP 오류: ${path}`);
+    if (data?.error) throw new Error(typeof data.error === "string" ? data.error : data.error.message || `FMP error: ${path}`);
     if (data?.Error) throw new Error(data.Error);
     return data;
   });
@@ -69,7 +69,7 @@ async function fetchYahooQuotePage(code, env) {
   const html = await response.text();
 
   if (!response.ok) {
-    throw new Error(`Yahoo Finance ETF 페이지 조회 실패: HTTP ${response.status}`);
+    throw new Error(`Yahoo Finance ETF page request failed: HTTP ${response.status}`);
   }
 
   return html;
@@ -77,55 +77,12 @@ async function fetchYahooQuotePage(code, env) {
 
 function decodeHtmlEntities(text) {
   return text
-    .replace(/&quot;/g, '"')
+    .replace(/&quot;/g, "\"")
     .replace(/&amp;/g, "&")
     .replace(/&#x27;/g, "'")
     .replace(/&#39;/g, "'")
     .replace(/&lt;/g, "<")
     .replace(/&gt;/g, ">");
-}
-
-function extractYahooEmbeddedJson(html, code) {
-  const marker = `quoteSummary/${code.toUpperCase()}?`;
-  const scriptMatches = [...html.matchAll(/<script type="application\/json" data-sveltekit-fetched[^>]*>([\s\S]*?)<\/script>/g)];
-
-  for (const match of scriptMatches) {
-    const scriptBody = match[1] || "";
-    if (!scriptBody.includes(marker)) continue;
-
-    let outer;
-    try {
-      outer = JSON.parse(scriptBody);
-    } catch (error) {
-      continue;
-    }
-
-    const innerBody = outer?.body;
-    if (!innerBody) continue;
-
-    const decoded = decodeHtmlEntities(innerBody);
-    const inner = JSON.parse(decoded);
-    return inner?.quoteSummary?.result?.[0] ?? null;
-  }
-
-  return null;
-}
-
-function emptyEtfMetrics() {
-  return {
-    expenseRatio: null,
-    dividendYield: null,
-    assetsUnderManagement: null,
-    nav: null,
-  };
-}
-
-function formatCompactCurrency(value) {
-  if (value == null || !Number.isFinite(value)) return null;
-  if (Math.abs(value) >= 1_000_000_000) return `$${round(value / 1_000_000_000, 2)}B`;
-  if (Math.abs(value) >= 1_000_000) return `$${round(value / 1_000_000, 2)}M`;
-  if (Math.abs(value) >= 1_000) return `$${round(value / 1_000, 2)}K`;
-  return `$${round(value, 2)}`;
 }
 
 function firstDefined(...values) {
@@ -147,6 +104,21 @@ function getFmtValue(node) {
   if (node == null) return null;
   if (typeof node === "object") return node.fmt || null;
   return String(node);
+}
+
+function formatCompactCurrency(value) {
+  if (value == null || !Number.isFinite(value)) return null;
+  if (Math.abs(value) >= 1_000_000_000_000) return `$${round(value / 1_000_000_000_000, 2)}T`;
+  if (Math.abs(value) >= 1_000_000_000) return `$${round(value / 1_000_000_000, 2)}B`;
+  if (Math.abs(value) >= 1_000_000) return `$${round(value / 1_000_000, 2)}M`;
+  if (Math.abs(value) >= 1_000) return `$${round(value / 1_000, 2)}K`;
+  return `$${round(value, 2)}`;
+}
+
+function convertYahooAssetNumber(raw) {
+  const numeric = toNumber(raw);
+  if (numeric == null) return null;
+  return numeric < 1_000_000 ? numeric * 1_000 : numeric;
 }
 
 function normalizeFmpInfoRow(row) {
@@ -181,7 +153,7 @@ function normalizeYahooEtfInfo(summary) {
   return {
     expenseRatio: getRawNumber(feeInfo.annualReportExpenseRatio) != null ? getRawNumber(feeInfo.annualReportExpenseRatio) * 100 : null,
     expenseRatioLabel: getFmtValue(feeInfo.annualReportExpenseRatio),
-    assetsUnderManagement: getRawNumber(feeInfo.totalNetAssets),
+    assetsUnderManagement: convertYahooAssetNumber(getRawNumber(feeInfo.totalNetAssets)),
     assetsUnderManagementLabel: getFmtValue(feeInfo.totalNetAssets),
     dividendYield: getRawNumber(summaryDetail.yield) != null ? getRawNumber(summaryDetail.yield) * 100 : null,
     dividendYieldLabel: getFmtValue(summaryDetail.yield),
@@ -190,64 +162,10 @@ function normalizeYahooEtfInfo(summary) {
     family: fundProfile.family || null,
     categoryName: fundProfile.categoryName || null,
     legalType: fundProfile.legalType || null,
-    longBusinessSummary: summary?.assetProfile?.longBusinessSummary || null,
     longName: price.longName || price.shortName || null,
     latestPrice: getRawNumber(price.regularMarketPrice),
     latestPriceLabel: getFmtValue(price.regularMarketPrice),
   };
-}
-
-function buildEtfDetailCards(info) {
-  return [
-    {
-      label: "운용보수",
-      value: firstDefined(info.expenseRatioLabel, info.expenseRatio != null ? `${round(info.expenseRatio, 2)}%` : null, "-"),
-      description: "ETF 총보수 또는 순보수 기준입니다.",
-    },
-    {
-      label: "배당수익률",
-      value: firstDefined(info.dividendYieldLabel, info.dividendYield != null ? `${round(info.dividendYield, 2)}%` : null, "-"),
-      description: "최근 제공된 ETF 배당수익률 기준입니다.",
-    },
-    {
-      label: "순자산 규모",
-      value: firstDefined(info.assetsUnderManagementLabel, formatCompactCurrency(info.assetsUnderManagement), "-"),
-      description: "AUM 또는 총 순자산 규모입니다.",
-    },
-    {
-      label: "최근 가격",
-      value: firstDefined(info.latestPriceLabel, info.latestPrice != null ? `$${round(info.latestPrice, 2)}` : null, info.navLabel, "-"),
-      description: "ETF 최신 거래 가격 기준입니다.",
-    },
-  ];
-}
-
-function normalizeFmpHoldings(rows) {
-  return (Array.isArray(rows) ? rows : [])
-    .map((row) => ({
-      name: row.asset || row.name || row.holding || row.symbol || "",
-      symbol: row.symbol || "",
-      weight:
-        toNumber(row.weightPercentage) ??
-        toNumber(row.weight) ??
-        toNumber(row.percentage) ??
-        toNumber(row.percentAssets) ??
-        null,
-    }))
-    .filter((row) => row.name)
-    .sort((a, b) => (b.weight ?? -1) - (a.weight ?? -1))
-    .slice(0, 10);
-}
-
-function normalizeFmpSectorWeights(rows) {
-  return (Array.isArray(rows) ? rows : [])
-    .map((row) => ({
-      name: row.sector || row.name || "",
-      weight: toNumber(row.weightPercentage) ?? toNumber(row.weight) ?? toNumber(row.percentage) ?? null,
-    }))
-    .filter((row) => row.name)
-    .sort((a, b) => (b.weight ?? -1) - (a.weight ?? -1))
-    .slice(0, 8);
 }
 
 function normalizeYahooHoldings(summary) {
@@ -278,25 +196,330 @@ function normalizeYahooSectorWeights(summary) {
     .slice(0, 8);
 }
 
+function normalizeFmpHoldings(rows) {
+  return (Array.isArray(rows) ? rows : [])
+    .map((row) => ({
+      name: row.asset || row.name || row.holding || row.symbol || "",
+      symbol: row.symbol || "",
+      weight:
+        toNumber(row.weightPercentage) ??
+        toNumber(row.weight) ??
+        toNumber(row.percentage) ??
+        toNumber(row.percentAssets) ??
+        null,
+    }))
+    .filter((row) => row.name)
+    .sort((a, b) => (b.weight ?? -1) - (a.weight ?? -1))
+    .slice(0, 10);
+}
+
+function normalizeFmpSectorWeights(rows) {
+  return (Array.isArray(rows) ? rows : [])
+    .map((row) => ({
+      name: row.sector || row.name || "",
+      weight: toNumber(row.weightPercentage) ?? toNumber(row.weight) ?? toNumber(row.percentage) ?? null,
+    }))
+    .filter((row) => row.name)
+    .sort((a, b) => (b.weight ?? -1) - (a.weight ?? -1))
+    .slice(0, 8);
+}
+
+function extractYahooEmbeddedSummary(html, code) {
+  const marker = `quoteSummary/${code.toUpperCase()}?`;
+  const scripts = [...html.matchAll(/<script type="application\/json" data-sveltekit-fetched[^>]*>([\s\S]*?)<\/script>/g)];
+
+  for (const match of scripts) {
+    const raw = match[1] || "";
+    if (!raw.includes(marker)) continue;
+
+    try {
+      const outer = JSON.parse(raw);
+      const innerBody = decodeHtmlEntities(outer?.body || "");
+      if (!innerBody) continue;
+      const inner = JSON.parse(innerBody);
+      const summary = inner?.quoteSummary?.result?.[0];
+      if (summary) return summary;
+    } catch {
+      continue;
+    }
+  }
+
+  return null;
+}
+
+function captureJsonObjectBlock(text, startIndex) {
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+
+  for (let i = startIndex; i < text.length; i += 1) {
+    const char = text[i];
+
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+      } else if (char === "\\") {
+        escaped = true;
+      } else if (char === "\"") {
+        inString = false;
+      }
+      continue;
+    }
+
+    if (char === "\"") {
+      inString = true;
+      continue;
+    }
+
+    if (char === "{") {
+      depth += 1;
+      continue;
+    }
+
+    if (char === "}") {
+      depth -= 1;
+      if (depth === 0) {
+        return text.slice(startIndex, i + 1);
+      }
+    }
+  }
+
+  return null;
+}
+
+function extractYahooSummaryFromHtml(html) {
+  const target = "\"quoteSummary\":{\"result\":[{";
+  const start = html.indexOf(target);
+  if (start === -1) return null;
+
+  const objectStart = html.indexOf("{", start + "\"quoteSummary\":{\"result\":[".length);
+  if (objectStart === -1) return null;
+
+  const summaryBlock = captureJsonObjectBlock(html, objectStart);
+  if (!summaryBlock) return null;
+
+  try {
+    return JSON.parse(summaryBlock);
+  } catch {
+    return null;
+  }
+}
+
+function extractJsonStringField(text, key) {
+  const regex = new RegExp(`"${key}":"((?:\\\\.|[^"\\\\])*)"`);
+  const match = text.match(regex);
+  if (!match) return null;
+  try {
+    return JSON.parse(`"${match[1]}"`);
+  } catch {
+    return match[1];
+  }
+}
+
+function extractJsonNumber(text, key) {
+  const regex = new RegExp(`"${key}":\\{"raw":(-?\\d+(?:\\.\\d+)?)`);
+  const match = text.match(regex);
+  return match ? Number(match[1]) : null;
+}
+
+function extractJsonFmt(text, key) {
+  const regex = new RegExp(`"${key}":\\{[^}]*"fmt":"((?:\\\\.|[^"\\\\])*)"`);
+  const match = text.match(regex);
+  if (!match) return null;
+  try {
+    return JSON.parse(`"${match[1]}"`);
+  } catch {
+    return match[1];
+  }
+}
+
+function extractArrayBlock(text, key) {
+  const keyIndex = text.indexOf(`"${key}":[`);
+  if (keyIndex === -1) return null;
+  const start = text.indexOf("[", keyIndex);
+  if (start === -1) return null;
+
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+
+  for (let i = start; i < text.length; i += 1) {
+    const char = text[i];
+
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+      } else if (char === "\\") {
+        escaped = true;
+      } else if (char === "\"") {
+        inString = false;
+      }
+      continue;
+    }
+
+    if (char === "\"") {
+      inString = true;
+      continue;
+    }
+
+    if (char === "[") {
+      depth += 1;
+      continue;
+    }
+
+    if (char === "]") {
+      depth -= 1;
+      if (depth === 0) {
+        return text.slice(start, i + 1);
+      }
+    }
+  }
+
+  return null;
+}
+
+function extractYahooRegexFallback(html) {
+  const expenseRatio = extractJsonNumber(html, "annualReportExpenseRatio");
+  const expenseRatioLabel = extractJsonFmt(html, "annualReportExpenseRatio");
+  const totalNetAssets = extractJsonNumber(html, "totalNetAssets");
+  const totalNetAssetsLabel = extractJsonFmt(html, "totalNetAssets");
+  const dividendYield = extractJsonNumber(html, "yield");
+  const dividendYieldLabel = extractJsonFmt(html, "yield");
+  const latestPrice = extractJsonNumber(html, "regularMarketPrice");
+  const latestPriceLabel = extractJsonFmt(html, "regularMarketPrice");
+  const longName = extractJsonStringField(html, "longName") || extractJsonStringField(html, "shortName");
+  const family = extractJsonStringField(html, "family");
+  const categoryName = extractJsonStringField(html, "categoryName");
+  const legalType = extractJsonStringField(html, "legalType");
+
+  let holdings = [];
+  const holdingsBlock = extractArrayBlock(html, "holdings");
+  if (holdingsBlock) {
+    try {
+      const rows = JSON.parse(holdingsBlock);
+      holdings = rows
+        .map((row) => ({
+          name: row.holdingName || row.symbol || "",
+          symbol: row.symbol || "",
+          weight: getRawNumber(row.holdingPercent) != null ? getRawNumber(row.holdingPercent) * 100 : null,
+        }))
+        .filter((row) => row.name)
+        .sort((a, b) => (b.weight ?? -1) - (a.weight ?? -1))
+        .slice(0, 10);
+    } catch {
+      holdings = [];
+    }
+  }
+
+  let sectorWeights = [];
+  const sectorBlock = extractArrayBlock(html, "sectorWeightings");
+  if (sectorBlock) {
+    try {
+      const rows = JSON.parse(sectorBlock);
+      sectorWeights = rows
+        .map((row) => {
+          const [name, payload] = Object.entries(row || {})[0] ?? [];
+          return {
+            name: name || "",
+            weight: getRawNumber(payload) != null ? getRawNumber(payload) * 100 : null,
+          };
+        })
+        .filter((row) => row.name)
+        .sort((a, b) => (b.weight ?? -1) - (a.weight ?? -1))
+        .slice(0, 8);
+    } catch {
+      sectorWeights = [];
+    }
+  }
+
+  return {
+    info: {
+      expenseRatio: expenseRatio != null ? expenseRatio * 100 : null,
+      expenseRatioLabel,
+      assetsUnderManagement: convertYahooAssetNumber(totalNetAssets),
+      assetsUnderManagementLabel: totalNetAssetsLabel,
+      dividendYield: dividendYield != null ? dividendYield * 100 : null,
+      dividendYieldLabel,
+      nav: latestPrice,
+      navLabel: latestPriceLabel,
+      latestPrice,
+      latestPriceLabel,
+      family,
+      categoryName,
+      legalType,
+      longName,
+    },
+    holdings,
+    sectorWeights,
+    summary: null,
+  };
+}
+
 async function fetchYahooEtfData(code, env) {
   const html = await fetchYahooQuotePage(code, env);
-  const summary = extractYahooEmbeddedJson(html, code);
-  if (!summary) {
-    throw new Error("Yahoo Finance ETF 페이지에서 요약 데이터를 찾지 못했습니다.");
+
+  const structuredSummary = extractYahooEmbeddedSummary(html, code) || extractYahooSummaryFromHtml(html);
+  if (structuredSummary) {
+    return {
+      info: normalizeYahooEtfInfo(structuredSummary),
+      holdings: normalizeYahooHoldings(structuredSummary),
+      sectorWeights: normalizeYahooSectorWeights(structuredSummary),
+      summary: structuredSummary,
+    };
   }
-  return {
-    info: normalizeYahooEtfInfo(summary),
-    holdings: normalizeYahooHoldings(summary),
-    sectorWeights: normalizeYahooSectorWeights(summary),
-    summary,
-  };
+
+  const regexFallback = extractYahooRegexFallback(html);
+  const hasFallbackData =
+    regexFallback.info.expenseRatio != null ||
+    regexFallback.info.latestPrice != null ||
+    regexFallback.holdings.length > 0 ||
+    regexFallback.sectorWeights.length > 0;
+
+  if (hasFallbackData) {
+    return regexFallback;
+  }
+
+  throw new Error("Unable to extract ETF summary data from Yahoo Finance page.");
+}
+
+function buildEtfDetailCards(info) {
+  return [
+    {
+      label: "Expense Ratio",
+      value: firstDefined(info.expenseRatioLabel, info.expenseRatio != null ? `${round(info.expenseRatio, 2)}%` : null, "-"),
+      description: "Total annual fund expense ratio.",
+    },
+    {
+      label: "Dividend Yield",
+      value: firstDefined(info.dividendYieldLabel, info.dividendYield != null ? `${round(info.dividendYield, 2)}%` : null, "-"),
+      description: "Most recent trailing dividend yield.",
+    },
+    {
+      label: "Assets",
+      value: firstDefined(info.assetsUnderManagementLabel, formatCompactCurrency(info.assetsUnderManagement), "-"),
+      description: "Assets under management.",
+    },
+    {
+      label: "Last Price",
+      value: firstDefined(info.latestPriceLabel, info.latestPrice != null ? `$${round(info.latestPrice, 2)}` : null, info.navLabel, "-"),
+      description: "Latest market price.",
+    },
+  ];
+}
+
+function buildSourceList(code) {
+  return [
+    { label: "Yahoo Finance ETF Quote Page", url: `${YAHOO_FINANCE_QUOTE_URL}/${encodeURIComponent(code)}` },
+    { label: "FMP Quote API", url: "https://site.financialmodelingprep.com/developer/docs/stable/quotes" },
+    { label: "FMP ETF Information API", url: "https://site.financialmodelingprep.com/developer/docs/stable/information" },
+  ];
 }
 
 export async function getUSEtfData(code, env, selectedName = "") {
   let yahooData = null;
   try {
     yahooData = await fetchYahooEtfData(code, env);
-  } catch (error) {
+  } catch {
     yahooData = null;
   }
 
@@ -318,8 +541,8 @@ export async function getUSEtfData(code, env, selectedName = "") {
   const profile = Array.isArray(profileData) ? profileData[0] ?? {} : profileData ?? {};
   const fmpInfo = normalizeFmpInfoRow(Array.isArray(infoData) ? infoData[0] ?? {} : infoData ?? {});
   const yahooInfo = yahooData?.info ?? {};
-  const latestPrice = firstDefined(toNumber(quote.price), yahooInfo.latestPrice, yahooInfo.nav);
 
+  const latestPrice = firstDefined(toNumber(quote.price), yahooInfo.latestPrice, yahooInfo.nav);
   const mergedInfo = {
     expenseRatio: firstDefined(yahooInfo.expenseRatio, fmpInfo.expenseRatio),
     expenseRatioLabel: yahooInfo.expenseRatioLabel || null,
@@ -337,15 +560,22 @@ export async function getUSEtfData(code, env, selectedName = "") {
   const sectorWeights = yahooData?.sectorWeights?.length ? yahooData.sectorWeights : normalizeFmpSectorWeights(sectorData);
   const category = firstDefined(
     yahooData?.summary?.fundProfile?.categoryName,
+    yahooInfo.categoryName,
     yahooData?.summary?.fundProfile?.legalType,
+    yahooInfo.legalType,
     profile.industry,
     profile.sector,
     "ETF",
   );
-  const provider = firstDefined(yahooData?.summary?.fundProfile?.family, profile.companyName);
+  const provider = firstDefined(
+    yahooData?.summary?.fundProfile?.family,
+    yahooInfo.family,
+    profile.companyName,
+  );
   const displayName = firstDefined(
     selectedName,
     yahooData?.summary?.price?.longName,
+    yahooInfo.longName,
     yahooData?.summary?.price?.shortName,
     profile.companyName,
     code,
@@ -356,28 +586,28 @@ export async function getUSEtfData(code, env, selectedName = "") {
       code,
       name: displayName,
       market: "US",
-      marketLabel: "미국 주식",
+      marketLabel: "US Stock",
       industry: category,
       assetType: "ETF",
-      description: `${category}${provider ? ` · ${provider}` : ""}${latestPrice != null ? ` · 최근 가격 $${round(latestPrice, 2)}` : ""}`,
-      metrics: emptyEtfMetrics(),
+      description: `${category}${provider ? ` · ${provider}` : ""}${latestPrice != null ? ` · Last price $${round(latestPrice, 2)}` : ""}`,
+      metrics: {
+        expenseRatio: mergedInfo.expenseRatio,
+        dividendYield: mergedInfo.dividendYield,
+        assetsUnderManagement: mergedInfo.assetsUnderManagement,
+        nav: mergedInfo.nav,
+      },
       metricDefinitions: [],
       etfDetails: buildEtfDetailCards(mergedInfo),
       holdings,
       sectorWeights,
     },
     history: [],
-    summaryNote:
-      "ETF는 기업 재무제표보다 운용 구조를 보는 자산입니다. 운용보수, 배당수익률, 순자산 규모, 상위 보유종목, 섹터 비중 중심으로 해석하는 편이 맞습니다.",
+    summaryNote: "For ETFs, fund structure matters more than company statements. Expense ratio, dividend yield, assets, holdings, and sector weights are the key items to read together.",
     notes: [
-      "ETF는 개별 기업 재무제표보다 운용보수, 배당수익률, 순자산 규모, 보유종목 구성과 비중을 보는 편이 더 적절합니다.",
-      "상위 보유종목과 섹터 비중을 함께 보면 ETF가 어느 방향의 리스크에 노출되는지 빠르게 파악할 수 있습니다.",
-      "레버리지 ETF는 장기 보유 시 복리 효과와 변동성 드래그 때문에 기초지수를 단순 배수로 따라가지 않을 수 있습니다.",
+      "Leveraged ETFs can diverge from the simple index multiple over longer holding periods because of compounding and volatility drag.",
+      "Expense ratio and dividend yield can differ slightly by data vendor and update timing.",
+      "Top holdings and sector weights help show which theme and risk concentration the ETF is actually carrying.",
     ],
-    sources: [
-      { label: "Yahoo Finance ETF Quote Page", url: `${YAHOO_FINANCE_QUOTE_URL}/${encodeURIComponent(code)}` },
-      { label: "FMP Quote API", url: "https://site.financialmodelingprep.com/developer/docs/stable/quotes" },
-      { label: "FMP ETF Information API", url: "https://site.financialmodelingprep.com/developer/docs/stable/information" },
-    ],
+    sources: buildSourceList(code),
   };
 }
