@@ -11,6 +11,7 @@ const ui = {
   searchInput: document.querySelector("#stock-search"),
   searchResults: document.querySelector("#search-results"),
   selectionSummary: document.querySelector("#selection-summary"),
+  fxBanner: document.querySelector("#fxBanner"),
   insightSummary: document.querySelector("#insightSummary"),
   metricGrid: document.querySelector("#metricGrid"),
   quarterlyTrend: document.querySelector("#quarterlyTrend"),
@@ -198,7 +199,6 @@ function renderEtfBreakdownLocalized(stock) {
 }
 
 function renderEtfInsightSummary(stock, summaryNote, sources) {
-  const fx = state.stockData?.fx;
   ui.insightSummary.classList.remove("empty-state");
   ui.insightSummary.innerHTML = `
     <article class="summary-card">
@@ -207,18 +207,31 @@ function renderEtfInsightSummary(stock, summaryNote, sources) {
       <p>${summaryNote}</p>
     </article>
     <article class="summary-card">
-      <p class="section-kicker">환율</p>
-      <h3>실시간 환율</h3>
-      <p>${fx?.rate ? `1 USD = ${fx.rate.toFixed(2)} KRW` : "환율 데이터를 불러오지 못했습니다."}</p>
-      <p>${fx?.updatedAt ? `기준 시각: ${fx.updatedAt}` : ""}</p>
-    </article>
-    <article class="summary-card">
       <p class="section-kicker">출처</p>
       <h3>데이터 출처</h3>
       <ul class="source-list">
         ${sources.map((source) => `<li><a href="${source.url}" target="_blank" rel="noreferrer">${source.label}</a></li>`).join("")}
       </ul>
     </article>
+  `;
+}
+
+function renderFxBanner() {
+  const fx = state.stockData?.fx;
+  ui.fxBanner.classList.remove("empty-state");
+
+  if (!fx?.rate) {
+    ui.fxBanner.classList.add("empty-state");
+    ui.fxBanner.textContent = "USD/KRW 환율 데이터를 불러오지 못했습니다.";
+    return;
+  }
+
+  const provider = fx.provider || "환율 API";
+  const updatedAt = fx.updatedAt || "기준 시각 없음";
+  ui.fxBanner.innerHTML = `
+    <strong>1 USD = ${fx.rate.toFixed(2)} KRW</strong>
+    <small>기준 시각: ${updatedAt}</small>
+    <small>출처: ${provider}</small>
   `;
 }
 
@@ -603,6 +616,7 @@ async function runBacktest() {
 
 function renderError(message) {
   ui.selectionSummary.innerHTML = `<strong>조회 실패</strong><small>${message}</small>`;
+  renderFxBanner();
   ui.insightSummary.classList.remove("empty-state");
   ui.insightSummary.innerHTML = `<div class="error-card">${message}</div>`;
   ui.metricGrid.innerHTML = "";
@@ -746,6 +760,7 @@ async function loadStock(code, name = "", assetType = "") {
     state.selectedStock = data.stock;
     state.stockData = data;
     renderSelection(data.stock);
+    renderFxBanner();
     renderInsightSummary(data.stock, data.history, data.summaryNote, data.sources);
     renderMetrics(data.stock, data.history);
     renderQuarterlyTrend(data.history, data.stock.metricDefinitions);
@@ -836,6 +851,7 @@ async function boot() {
   ]);
   renderBacktestTarget(null);
   renderBacktestIdleState();
+  renderFxBanner();
   setActiveTab("fundamentals");
   attachEvents();
   renderIdleSearchState();
