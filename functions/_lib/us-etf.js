@@ -145,7 +145,14 @@ function decodeHtmlEntities(text) {
 
 function firstDefined(...values) {
   for (const value of values) {
-    if (value != null && value !== "") return value;
+    if (value == null) continue;
+    if (typeof value === "string") {
+      const normalized = value.trim();
+      if (!normalized) continue;
+      if (["-", "--", "n/a", "na", "null", "undefined"].includes(normalized.toLowerCase())) continue;
+      return normalized;
+    }
+    return value;
   }
   return null;
 }
@@ -285,25 +292,40 @@ function normalizeFmpSectorWeights(rows) {
 
 function getFirstObjectValue(object, keys) {
   for (const key of keys) {
-    if (object?.[key] != null && object[key] !== "") return object[key];
+    const value = firstDefined(object?.[key]);
+    if (value != null) return value;
   }
   return null;
+}
+
+function scaleAlphaRatioToPercent(value) {
+  if (value == null || !Number.isFinite(value)) return null;
+  return Math.abs(value) <= 1 ? value * 100 : value;
+}
+
+function formatPercentLabel(value) {
+  if (value == null || !Number.isFinite(value)) return null;
+  return `${round(value, 2)}%`;
 }
 
 function normalizeAlphaVantageEtfProfile(data) {
   if (!data || typeof data !== "object") return { info: {}, holdings: [], sectorWeights: [] };
 
+  const rawExpenseRatio = toNumber(
+    getFirstObjectValue(data, ["expense_ratio", "net_expense_ratio", "expenseRatio", "netExpenseRatio"]),
+  );
+  const rawDividendYield = toNumber(
+    getFirstObjectValue(data, ["dividend_yield", "yield", "dividendYield", "distribution_yield"]),
+  );
+
   const info = {
-    expenseRatio:
-      toNumber(getFirstObjectValue(data, ["expense_ratio", "net_expense_ratio", "expenseRatio", "netExpenseRatio"])) ??
-      null,
-    expenseRatioLabel: getFirstObjectValue(data, ["expense_ratio", "net_expense_ratio", "expenseRatio", "netExpenseRatio"]),
+    expenseRatio: rawExpenseRatio ?? null,
+    expenseRatioLabel: rawExpenseRatio != null ? formatPercentLabel(rawExpenseRatio) : null,
     assetsUnderManagement:
       toNumber(getFirstObjectValue(data, ["net_assets", "aum", "assets", "netAssets", "total_net_assets"])) ?? null,
-    assetsUnderManagementLabel: getFirstObjectValue(data, ["net_assets", "aum", "assets", "netAssets", "total_net_assets"]),
-    dividendYield:
-      toNumber(getFirstObjectValue(data, ["dividend_yield", "yield", "dividendYield", "distribution_yield"])) ?? null,
-    dividendYieldLabel: getFirstObjectValue(data, ["dividend_yield", "yield", "dividendYield", "distribution_yield"]),
+    assetsUnderManagementLabel: null,
+    dividendYield: scaleAlphaRatioToPercent(rawDividendYield),
+    dividendYieldLabel: rawDividendYield != null ? formatPercentLabel(scaleAlphaRatioToPercent(rawDividendYield)) : null,
     family: getFirstObjectValue(data, ["fund_family", "issuer", "fundFamily", "issuerName"]),
     categoryName: getFirstObjectValue(data, ["asset_class", "category", "assetClass", "fund_category"]),
     legalType: "ETF",
@@ -320,10 +342,11 @@ function normalizeAlphaVantageEtfProfile(data) {
 
   const holdings = rawHoldings
     .map((row) => ({
-      name: getFirstObjectValue(row, ["name", "holding", "asset", "symbol"]) || "",
+      name: getFirstObjectValue(row, ["name", "description", "holding", "asset", "symbol"]) || "",
       symbol: getFirstObjectValue(row, ["symbol", "ticker"]) || "",
-      weight:
-        toNumber(getFirstObjectValue(row, ["weight", "weight_percent", "percentage", "allocation"])) ?? null,
+      weight: scaleAlphaRatioToPercent(
+        toNumber(getFirstObjectValue(row, ["weight", "weight_percent", "percentage", "allocation"])),
+      ),
     }))
     .filter((row) => row.name)
     .sort((a, b) => (b.weight ?? -1) - (a.weight ?? -1))
@@ -338,8 +361,9 @@ function normalizeAlphaVantageEtfProfile(data) {
   const sectorWeights = rawSectorWeights
     .map((row) => ({
       name: getFirstObjectValue(row, ["sector", "name"]) || "",
-      weight:
-        toNumber(getFirstObjectValue(row, ["weight", "weight_percent", "percentage", "allocation"])) ?? null,
+      weight: scaleAlphaRatioToPercent(
+        toNumber(getFirstObjectValue(row, ["weight", "weight_percent", "percentage", "allocation"])),
+      ),
     }))
     .filter((row) => row.name)
     .sort((a, b) => (b.weight ?? -1) - (a.weight ?? -1))
@@ -751,7 +775,7 @@ function buildEtfDetailCards(info) {
     {
       key: "expenseRatio",
       label: "운용보수",
-      value: firstDefined(info.expenseRatioLabel, info.expenseRatio != null ? `${round(info.expenseRatio, 2)}%` : null, "-"),
+      value: firstDefined(info.expenseRatioLabel, info.expenseRatio != null ? formatPercentLabel(info.expenseRatio) : null, "-"),
       rawValue: info.expenseRatio,
       kind: "percent",
       description: "ETF가 매년 부담하는 총 보수 비율입니다.",
@@ -759,7 +783,7 @@ function buildEtfDetailCards(info) {
     {
       key: "dividendYield",
       label: "배당수익률",
-      value: firstDefined(info.dividendYieldLabel, info.dividendYield != null ? `${round(info.dividendYield, 2)}%` : null, "-"),
+      value: firstDefined(info.dividendYieldLabel, info.dividendYield != null ? formatPercentLabel(info.dividendYield) : null, "-"),
       rawValue: info.dividendYield,
       kind: "percent",
       description: "최근 기준 trailing 배당수익률입니다.",
@@ -767,7 +791,7 @@ function buildEtfDetailCards(info) {
     {
       key: "assetsUnderManagement",
       label: "순자산 규모",
-      value: firstDefined(info.assetsUnderManagementLabel, formatCompactCurrency(info.assetsUnderManagement), "-"),
+      value: firstDefined(formatCompactCurrency(info.assetsUnderManagement), info.assetsUnderManagementLabel, "-"),
       rawValue: info.assetsUnderManagement,
       kind: "money",
       description: "ETF 전체 운용 자산 규모입니다.",
