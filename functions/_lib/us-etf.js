@@ -150,6 +150,7 @@ function normalizeFmpInfoRow(row) {
       toNumber(row.netAssets) ??
       null,
     nav: toNumber(row.nav) ?? toNumber(row.navPrice) ?? null,
+    latestPrice: toNumber(row.price) ?? toNumber(row.previousClose) ?? null,
     dividendYield:
       toNumber(row.dividendYield) ??
       toNumber(row.yield) ??
@@ -475,7 +476,7 @@ function stripTags(text) {
 
 function extractStockAnalysisCellValue(html, label) {
   const escapedLabel = label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const regex = new RegExp(`${escapedLabel}</td><td[^>]*>([\\s\\S]*?)</td>`, "i");
+  const regex = new RegExp(`${escapedLabel}</td><td[^>]*>([\s\S]*?)</td>`, "i");
   const match = html.match(regex);
   return match ? stripTags(match[1]) : null;
 }
@@ -521,6 +522,7 @@ async function fetchStockAnalysisEtfData(code, env) {
   const lastPriceLabel =
     extractStockAnalysisCellValue(overviewHtml, "Previous Close") ||
     extractStockAnalysisCellValue(overviewHtml, "Open");
+  const holdingsCount = extractStockAnalysisCellValue(overviewHtml, "Holdings");
   const categoryName =
     extractStockAnalysisCellValue(overviewHtml, "Category") ||
     extractStockAnalysisCellValue(overviewHtml, "Asset Class");
@@ -544,7 +546,7 @@ async function fetchStockAnalysisEtfData(code, env) {
       categoryName,
       legalType: "ETF",
       longName: null,
-      holdingsCount: extractStockAnalysisCellValue(overviewHtml, "Holdings"),
+      holdingsCount,
     },
     holdings,
     sectorWeights: [],
@@ -659,7 +661,9 @@ export async function getUSEtfData(code, env, selectedName = "") {
   const yahooInfo = yahooData?.info ?? {};
   const stockAnalysisInfo = stockAnalysisData?.info ?? {};
 
-  const latestPrice = firstDefined(toNumber(quote.price), stockAnalysisInfo.latestPrice, yahooInfo.latestPrice, yahooInfo.nav);
+  const quotePrice = toNumber(quote.price);
+  const quotePriceLabel = quotePrice != null ? `$${round(quotePrice, 2)}` : null;
+  const latestPrice = firstDefined(quotePrice, fmpInfo.latestPrice, stockAnalysisInfo.latestPrice, yahooInfo.latestPrice, yahooInfo.nav);
   const mergedInfo = {
     expenseRatio: firstDefined(stockAnalysisInfo.expenseRatio, yahooInfo.expenseRatio, fmpInfo.expenseRatio),
     expenseRatioLabel: firstDefined(stockAnalysisInfo.expenseRatioLabel, yahooInfo.expenseRatioLabel),
@@ -667,10 +671,10 @@ export async function getUSEtfData(code, env, selectedName = "") {
     dividendYieldLabel: firstDefined(stockAnalysisInfo.dividendYieldLabel, yahooInfo.dividendYieldLabel),
     assetsUnderManagement: firstDefined(stockAnalysisInfo.assetsUnderManagement, yahooInfo.assetsUnderManagement, fmpInfo.assetsUnderManagement),
     assetsUnderManagementLabel: firstDefined(stockAnalysisInfo.assetsUnderManagementLabel, yahooInfo.assetsUnderManagementLabel),
-    nav: firstDefined(stockAnalysisInfo.nav, yahooInfo.nav, fmpInfo.nav, latestPrice),
-    navLabel: firstDefined(stockAnalysisInfo.navLabel, yahooInfo.navLabel),
+    nav: firstDefined(fmpInfo.nav, stockAnalysisInfo.nav, yahooInfo.nav, latestPrice),
+    navLabel: firstDefined(quotePriceLabel, stockAnalysisInfo.navLabel, yahooInfo.navLabel),
     latestPrice,
-    latestPriceLabel: firstDefined(stockAnalysisInfo.latestPriceLabel, yahooInfo.latestPriceLabel),
+    latestPriceLabel: firstDefined(quotePriceLabel, stockAnalysisInfo.latestPriceLabel, yahooInfo.latestPriceLabel),
   };
 
   const holdings = stockAnalysisData?.holdings?.length
