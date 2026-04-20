@@ -73,6 +73,10 @@ function buildEtfDisplayValue(item) {
     return item?.value ?? "-";
   }
 
+  if (item.key === "assetsUnderManagement" || item.key === "lastPrice") {
+    return formatUsd(item.rawValue);
+  }
+
   if (item.kind === "money" && fxRate) {
     return `${formatUsd(item.rawValue)}\n${formatKrw(item.rawValue * fxRate)}`;
   }
