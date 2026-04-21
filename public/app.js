@@ -990,6 +990,7 @@ async function boot() {
     "미국 종목 검색은 SEC 종목 마스터와 FMP ETF 목록을 합쳐 즉시 필터링합니다.",
     "재무제표 탭은 FMP 분기 재무와 가격 데이터를 기준으로 핵심 지표를 계산합니다.",
     "백테스팅 탭은 추세 전환과 공포지수 전략을 NASDAQ Composite와 비교합니다.",
+    "실험실 탭은 향후 전략 실험 기능을 확장하기 위한 베타 영역입니다.",
   ]);
   renderBacktestTarget(null);
   renderBacktestIdleState();
