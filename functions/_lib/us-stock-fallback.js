@@ -54,7 +54,7 @@ async function fetchPage(url, env) {
 }
 
 function extractJsArrayBlock(html, key) {
-  const match = html.match(new RegExp(`${key}:\\[(.*?)\\]`, "s"));
+  const match = html.match(new RegExp(`${key}:\[(.*?)\]`, "s"));
   return match?.[1] ?? "";
 }
 
