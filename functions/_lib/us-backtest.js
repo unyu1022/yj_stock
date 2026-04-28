@@ -328,20 +328,22 @@ function buildStrategyChartSeries(strategyPoints, benchmarkPoints) {
 }
 
 async function loadMetaAndSeries(symbol, from, to, env) {
-  try {
-    const fmpPriceData = await fmpFetch("/historical-price-eod/full", { symbol, from, to }, env);
-    const fmpSeries = normalizePriceSeries(fmpPriceData);
-    if (fmpSeries.length) {
-      return {
-        series: fmpSeries,
-        meta: null,
-        source: "fmp",
-      };
-    }
-  } catch (error) {
-    const status = error?.status;
-    if (status != null && ![402, 403, 429].includes(status)) {
-      throw error;
+  if (env.FMP_API_KEY) {
+    try {
+      const fmpPriceData = await fmpFetch("/historical-price-eod/full", { symbol, from, to }, env);
+      const fmpSeries = normalizePriceSeries(fmpPriceData);
+      if (fmpSeries.length) {
+        return {
+          series: fmpSeries,
+          meta: null,
+          source: "fmp",
+        };
+      }
+    } catch (error) {
+      const status = error?.status;
+      if (status != null && ![401, 402, 403, 429].includes(status)) {
+        throw error;
+      }
     }
   }
 

@@ -4,3 +4,7 @@
 !.dev.vars.example
 .env*
 !.env.example
+telegram-bridge.env
+.telegram-bridge-state.json
+.telegram-bridge.lock
+.telegram-codex-last-message.txt
