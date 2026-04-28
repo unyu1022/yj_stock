@@ -4,6 +4,8 @@
 !.dev.vars.example
 .env*
 !.env.example
+__pycache__/
+*.pyc
 telegram-bridge.env
 .telegram-bridge-state.json
 .telegram-bridge.lock
