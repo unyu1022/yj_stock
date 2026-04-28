@@ -1,6 +1,10 @@
 import { badRequest, json, serverError } from "../_lib/http.js";
 import { getUsdKrwRate } from "../_lib/fx.js";
-import { fetchUSStockMetricFallback, mergeUSStockMetricFallback } from "../_lib/us-stock-fallback.js";
+import {
+  buildUSStockFallbackPayload,
+  fetchUSStockMetricFallback,
+  mergeUSStockMetricFallback,
+} from "../_lib/us-stock-fallback.js";
 import { getUSEtfData } from "../_lib/us-etf.js";
 import { getUSStockData } from "../_lib/us.js";
 
@@ -20,10 +24,21 @@ export async function onRequestGet(context) {
       return badRequest("code 파라미터가 필요합니다.");
     }
 
-    let payload =
-      assetType === "ETF"
-        ? await getUSEtfData(code, context.env, name)
-        : await getUSStockData(code, context.env, name);
+    let payload;
+    if (assetType === "ETF") {
+      payload = await getUSEtfData(code, context.env, name);
+    } else {
+      try {
+        payload = await getUSStockData(code, context.env, name);
+      } catch (error) {
+        try {
+          const fallback = await fetchUSStockMetricFallback(code, context.env);
+          payload = buildUSStockFallbackPayload(code, name, fallback);
+        } catch {
+          throw error;
+        }
+      }
+    }
 
     if (payload?.stock?.assetType !== "ETF") {
       const metrics = payload?.stock?.metrics ?? {};

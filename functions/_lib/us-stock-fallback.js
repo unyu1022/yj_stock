@@ -1,4 +1,4 @@
-import { round, toNumber } from "./metrics.js";
+import { metricDefinitions, round, toNumber } from "./metrics.js";
 
 const STOCKANALYSIS_STOCK_URL = "https://stockanalysis.com/stocks";
 
@@ -54,7 +54,7 @@ async function fetchPage(url, env) {
 }
 
 function extractJsArrayBlock(html, key) {
-  const match = html.match(new RegExp(`${key}:\[(.*?)\]`, "s"));
+  const match = html.match(new RegExp(`${key}:\\[(.*?)\\]`, "s"));
   return match?.[1] ?? "";
 }
 
@@ -147,6 +147,7 @@ export async function fetchUSStockMetricFallback(code, env) {
     roe: round(toNumber(firstValue(ratiosHtml, "Return on Equity (ROE)")) ?? latestHistory.roe),
     roic: round(toNumber(firstValue(ratiosHtml, "Return on Invested Capital (ROIC)")) ?? latestHistory.roic),
     operatingMargin: round(operatingMargin ?? latestHistory.operatingMargin),
+    debtRatio: round(latestHistory.debtRatio),
     dividendYield: round(dividendYield),
     history,
     source: {
@@ -169,6 +170,7 @@ export function mergeUSStockMetricFallback(payload, fallback) {
   metrics.roe = metrics.roe ?? fallback.roe ?? null;
   metrics.roic = metrics.roic ?? fallback.roic ?? null;
   metrics.operatingMargin = metrics.operatingMargin ?? fallback.operatingMargin ?? null;
+  metrics.debtRatio = metrics.debtRatio ?? fallback.debtRatio ?? null;
   metrics.dividendYield = metrics.dividendYield ?? fallback.dividendYield ?? 0;
 
   next.stock.metrics = metrics;
@@ -184,4 +186,40 @@ export function mergeUSStockMetricFallback(payload, fallback) {
   );
 
   return next;
+}
+
+export function buildUSStockFallbackPayload(code, name, fallback) {
+  const latestHistory = Array.isArray(fallback?.history) ? fallback.history[fallback.history.length - 1]?.metrics ?? {} : {};
+  const metrics = {
+    per: fallback?.per ?? latestHistory.per ?? null,
+    pbr: fallback?.pbr ?? latestHistory.pbr ?? null,
+    roe: fallback?.roe ?? latestHistory.roe ?? null,
+    roic: fallback?.roic ?? latestHistory.roic ?? null,
+    operatingMargin: fallback?.operatingMargin ?? latestHistory.operatingMargin ?? null,
+    debtRatio: fallback?.debtRatio ?? latestHistory.debtRatio ?? null,
+    dividendYield: fallback?.dividendYield ?? latestHistory.dividendYield ?? 0,
+  };
+
+  return {
+    stock: {
+      code,
+      name: name || code,
+      market: "US",
+      marketLabel: "미국 주식",
+      industry: "보조 재무 데이터",
+      assetType: "Stock",
+      description: "FMP 분기 재무 응답이 비어 Stock Analysis 공개 분기 지표로 표시합니다.",
+      metrics,
+      metricDefinitions,
+    },
+    history: Array.isArray(fallback?.history) ? fallback.history : [],
+    priceChart: [],
+    news: [],
+    summaryNote: "FMP 분기 재무 데이터를 받지 못해 Stock Analysis 공개 분기 지표로 핵심 지표와 분기 흐름을 복구했습니다.",
+    notes: [
+      "FMP 분기 재무제표 응답이 비어 있을 때 조회 실패로 끝내지 않고 보조 소스의 분기 지표를 사용합니다.",
+      "가격 기반 차트와 뉴스는 기본 FMP 응답을 받지 못한 경우 비어 있을 수 있습니다.",
+    ],
+    sources: [fallback?.source].filter(Boolean),
+  };
 }
