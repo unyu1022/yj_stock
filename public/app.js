@@ -736,10 +736,6 @@ function detectNewsTopic(text = "") {
     return "규제, 소송, 승인, 리콜 같은 법적 이슈에 관한 소식입니다. 비용 증가와 사업 지연 가능성을 확인해야 합니다.";
   }
 
-  if (hasAny(text, [/earnings/i, /revenue/i, /profit/i, /margin/i, /quarter/i, /guidance/i, /forecast/i, /outlook/i])) {
-    return "실적과 전망에 관한 소식입니다. 매출, 이익, 마진, 가이던스 변화가 투자 판단에 영향을 줄 수 있습니다.";
-  }
-
   if (hasAny(text, [/dividend/i, /yield/i, /buyback/i, /repurchase/i, /split/i])) {
     return "주주환원 정책에 관한 소식입니다. 배당, 자사주 매입, 주식분할 여부가 투자 매력도에 영향을 줄 수 있습니다.";
   }
@@ -768,7 +764,7 @@ function renderNews(news = []) {
   const items = Array.isArray(news) ? news : [];
   if (!items.length) {
     ui.newsList.classList.add("empty-state");
-    ui.newsList.textContent = "현재 전쟁, 합병, 규제, 실적처럼 투자 판단에 직접 영향을 줄 만한 핵심 뉴스가 없습니다.";
+    ui.newsList.textContent = "현재 전쟁, 합병, 규제, 소송, 리콜, 공급 차질처럼 투자 판단에 직접 영향을 줄 만한 핵심 뉴스가 없습니다.";
     return;
   }
 
