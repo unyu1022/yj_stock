@@ -327,6 +327,108 @@ function buildStrategyChartSeries(strategyPoints, benchmarkPoints) {
     .filter(Boolean);
 }
 
+function addMonthsUtc(date, months) {
+  const copy = new Date(date);
+  const originalDate = copy.getUTCDate();
+  copy.setUTCDate(1);
+  copy.setUTCMonth(copy.getUTCMonth() + months);
+  const lastDay = new Date(Date.UTC(copy.getUTCFullYear(), copy.getUTCMonth() + 1, 0)).getUTCDate();
+  copy.setUTCDate(Math.min(originalDate, lastDay));
+  return copy;
+}
+
+function buildMonthlyDates(startDate, endDate) {
+  const start = new Date(`${startDate}T00:00:00Z`);
+  const end = new Date(`${endDate}T00:00:00Z`);
+  const dates = [];
+  let cursor = start;
+
+  while (cursor <= end) {
+    dates.push(cursor.toISOString().slice(0, 10));
+    cursor = addMonthsUtc(cursor, 1);
+  }
+
+  return dates;
+}
+
+function simulateMonthlyDca(series, startDate, endDate, monthlyAmount) {
+  const buyDates = buildMonthlyDates(startDate, endDate);
+  const endPrice = findClosestPriceOnOrBefore(series, endDate);
+  if (!endPrice) {
+    throw new Error("기간 종료일에 사용할 가격 데이터가 부족합니다.");
+  }
+
+  let shares = 0;
+  let principal = 0;
+  const points = [];
+  const usedBuyDates = new Set();
+
+  for (const targetDate of buyDates) {
+    const buy = findClosestPriceOnOrAfter(series, targetDate);
+    if (!buy || buy.date > endDate || usedBuyDates.has(buy.date)) continue;
+
+    usedBuyDates.add(buy.date);
+    shares += monthlyAmount / buy.close;
+    principal += monthlyAmount;
+    const currentPrice = findClosestPriceOnOrBefore(series, buy.date);
+    const value = shares * (currentPrice?.close ?? buy.close);
+
+    points.push({
+      date: buy.date,
+      principal: round(principal),
+      value: round(value),
+      returnRate: principal > 0 ? round(((value / principal) - 1) * 100) : 0,
+      shares,
+    });
+  }
+
+  if (!points.length || principal <= 0) {
+    throw new Error("월 적립식 투자를 계산할 수 있는 매수 가능일이 부족합니다.");
+  }
+
+  const endingValue = shares * endPrice.close;
+  const profit = endingValue - principal;
+
+  return {
+    startDate: points[0].date,
+    endDate: endPrice.date,
+    contributionCount: points.length,
+    principal: round(principal),
+    endingValue: round(endingValue),
+    profit: round(profit),
+    cumulativeReturn: round((profit / principal) * 100),
+    shares: round(shares),
+    points: points.map((point) => {
+      const price = findClosestPriceOnOrBefore(series, point.date);
+      const value = point.shares * (price?.close ?? 0);
+      return {
+        date: point.date,
+        principal: point.principal,
+        value: round(value),
+        returnRate: point.principal > 0 ? round(((value / point.principal) - 1) * 100) : 0,
+      };
+    }),
+  };
+}
+
+function buildDcaChartSeries(stockPoints, benchmarkPoints) {
+  const benchmarkLookup = new Map(benchmarkPoints.map((point) => [point.date, point]));
+  return stockPoints
+    .map((point) => {
+      const benchmarkPoint = benchmarkLookup.get(point.date);
+      if (!benchmarkPoint) return null;
+      return {
+        date: point.date,
+        principal: point.principal,
+        stockValue: point.value,
+        benchmarkValue: benchmarkPoint.value,
+        stockReturn: point.returnRate,
+        benchmarkReturn: benchmarkPoint.returnRate,
+      };
+    })
+    .filter(Boolean);
+}
+
 async function loadMetaAndSeries(symbol, from, to, env) {
   if (env.FMP_API_KEY) {
     try {
@@ -352,6 +454,77 @@ async function loadMetaAndSeries(symbol, from, to, env) {
     series: normalizeYahooSeries(yahooData),
     meta: yahooData.meta,
     source: "yahoo",
+  };
+}
+
+export async function getUSDcaDataAny(code, env, years = 0, months = 0, monthlyAmount = 0) {
+  const normalizedYears = Number.isFinite(years) ? Math.max(0, Math.trunc(years)) : 0;
+  const normalizedMonths = Number.isFinite(months) ? Math.max(0, Math.trunc(months)) : 0;
+  const normalizedMonthlyAmount = Number.isFinite(monthlyAmount) ? Math.max(0, Math.trunc(monthlyAmount)) : 0;
+
+  if (normalizedYears === 0 && normalizedMonths === 0) {
+    throw new Error("투자 기간은 최소 1개월 이상이어야 합니다.");
+  }
+  if (normalizedMonthlyAmount <= 0) {
+    throw new Error("월 투자금은 0보다 커야 합니다.");
+  }
+
+  const today = new Date();
+  const fromDate = subtractPeriod(today, normalizedYears, normalizedMonths);
+  const from = fromDate.toISOString().slice(0, 10);
+  const to = today.toISOString().slice(0, 10);
+
+  const [stockPayload, benchmarkPayload] = await Promise.all([
+    loadMetaAndSeries(code, from, to, env),
+    loadMetaAndSeries("^IXIC", from, to, env),
+  ]);
+
+  const stockStart = findClosestPriceOnOrAfter(stockPayload.series, from);
+  const stockEnd = findClosestPriceOnOrBefore(stockPayload.series, to);
+  const benchmarkStart = findClosestPriceOnOrAfter(benchmarkPayload.series, from);
+  const benchmarkEnd = findClosestPriceOnOrBefore(benchmarkPayload.series, to);
+
+  if (!stockStart || !stockEnd || !benchmarkStart || !benchmarkEnd) {
+    throw new Error("적립식 투자 비교에 필요한 가격 데이터가 부족합니다.");
+  }
+
+  const alignedStartDate = stockStart.date > benchmarkStart.date ? stockStart.date : benchmarkStart.date;
+  const alignedEndDate = stockEnd.date < benchmarkEnd.date ? stockEnd.date : benchmarkEnd.date;
+  const stockResult = simulateMonthlyDca(stockPayload.series, alignedStartDate, alignedEndDate, normalizedMonthlyAmount);
+  const benchmarkResult = simulateMonthlyDca(benchmarkPayload.series, alignedStartDate, alignedEndDate, normalizedMonthlyAmount);
+  const chartSeries = buildDcaChartSeries(stockResult.points, benchmarkResult.points);
+
+  return {
+    mode: "dca",
+    stock: {
+      code,
+      name: stockPayload.meta?.longName || stockPayload.meta?.shortName || code,
+      assetType: stockPayload.meta?.instrumentType === "ETF" ? "ETF" : undefined,
+    },
+    period: {
+      years: normalizedYears,
+      months: normalizedMonths,
+      startDate: alignedStartDate,
+      endDate: alignedEndDate,
+    },
+    monthlyAmount: normalizedMonthlyAmount,
+    result: {
+      stock: stockResult,
+      benchmark: {
+        ...benchmarkResult,
+        code: "^IXIC",
+        name: benchmarkPayload.meta?.longName || "NASDAQ Composite",
+      },
+      excessReturn: round(stockResult.cumulativeReturn - benchmarkResult.cumulativeReturn),
+      excessProfit: round(stockResult.profit - benchmarkResult.profit),
+    },
+    chartSeries,
+    notes: [
+      "매월 첫 거래 가능일 종가에 같은 금액을 투자한다고 가정했습니다.",
+      "원금은 월 투자금과 실제 매수 횟수를 곱한 값이며, 누적수익률은 현재 평가금액 대비 원금 기준입니다.",
+      "비교 기준은 같은 월 투자금으로 NASDAQ Composite (^IXIC)에 적립식 투자한 결과입니다.",
+      `가격 데이터 소스: ${stockPayload.source === "yahoo" ? "Yahoo Finance fallback" : "FMP"} / benchmark ${benchmarkPayload.source === "yahoo" ? "Yahoo Finance fallback" : "FMP"}`,
+    ],
   };
 }
 

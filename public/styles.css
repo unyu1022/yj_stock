@@ -518,6 +518,10 @@ body {
   background: var(--accent);
 }
 
+.legend-swatch.principal {
+  background: var(--muted);
+}
+
 .bottom-nav {
   position: fixed;
   left: 0;
@@ -525,7 +529,7 @@ body {
   bottom: 0;
   z-index: 30;
   display: grid;
-  grid-template-columns: repeat(2, 1fr);
+  grid-template-columns: repeat(3, 1fr);
   gap: 10px;
   padding: 12px 14px calc(12px + env(safe-area-inset-bottom));
   background: rgba(243, 239, 228, 0.92);

@@ -1,5 +1,5 @@
 import { badRequest, json, serverError } from "../_lib/http.js";
-import { getUSBacktestDataAny } from "../_lib/us-backtest.js";
+import { getUSDcaDataAny, getUSBacktestDataAny } from "../_lib/us-backtest.js";
 
 export async function onRequestGet(context) {
   try {
@@ -8,6 +8,8 @@ export async function onRequestGet(context) {
     const years = Number(url.searchParams.get("years") || "0");
     const months = Number(url.searchParams.get("months") || "0");
     const strategy = (url.searchParams.get("strategy") || "trend").trim().toLowerCase();
+    const mode = (url.searchParams.get("mode") || "strategy").trim().toLowerCase();
+    const monthly = Number(url.searchParams.get("monthly") || "0");
 
     if (!code) {
       return badRequest("code 파라미터가 필요합니다.");
@@ -17,7 +19,10 @@ export async function onRequestGet(context) {
       return badRequest("years, months 파라미터는 0 이상의 숫자여야 합니다.");
     }
 
-    const payload = await getUSBacktestDataAny(code, context.env, years, months, strategy);
+    const payload =
+      mode === "dca"
+        ? await getUSDcaDataAny(code, context.env, years, months, monthly)
+        : await getUSBacktestDataAny(code, context.env, years, months, strategy);
     return json({ ok: true, ...payload });
   } catch (error) {
     return serverError(error.message);
