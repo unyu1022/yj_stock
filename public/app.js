@@ -807,7 +807,7 @@ function renderBacktestTarget(stock) {
     return;
   }
 
-  ui.backtestTarget.textContent = `${stock.name} (${stock.code}) 기준으로 선택 전략을 검증합니다. 현재는 추세 전환과 공포지수 전략을 같은 기간의 NASDAQ Composite와 비교할 수 있습니다.`;
+  ui.backtestTarget.textContent = `${stock.name} (${stock.code}) 기준으로 선택 전략을 검증합니다. 추세 전환, 공포지수, 모멘텀, RSI 역추세, 돌파 매매, 저변동성 추세를 같은 기간의 NASDAQ Composite와 비교할 수 있습니다.`;
 }
 
 function renderLabTarget(stock) {
@@ -944,6 +944,26 @@ function renderLabChart(data) {
 }
 
 function renderBacktestSummary(data) {
+  if (Array.isArray(data.strategies) && data.strategies.length) {
+    ui.backtestSummary.classList.remove("empty-state");
+    ui.backtestSummary.innerHTML = data.strategies
+      .map(
+        (item, index) => `
+          <article class="summary-card ${index === 0 ? "outlook-card good" : ""}">
+            <p class="section-kicker">${index === 0 ? "Best Strategy" : "Strategy"}</p>
+            <h3>${item.label}</h3>
+            <p>누적수익률 ${item.stock.totalReturn}% · CAGR ${item.stock.cagr}%</p>
+            <p>NASDAQ 대비 ${item.excessReturn}%p · 초과 CAGR ${item.excessCagr}%p</p>
+            <p>매매 전환 횟수 ${item.stock.trades ?? 0}회</p>
+          </article>
+        `,
+      )
+      .join("");
+
+    ui.backtestNotes.innerHTML = (data.notes ?? []).map((note) => `<li>${note}</li>`).join("");
+    return;
+  }
+
   const stock = data.result.stock;
   const benchmark = data.result.benchmark;
 
@@ -1416,7 +1436,7 @@ async function boot() {
   renderNotes([
     "미국 종목 검색은 SEC 종목 마스터와 FMP ETF 목록을 합쳐 즉시 필터링합니다.",
     "재무제표 탭은 FMP 분기 재무와 가격 데이터를 기준으로 핵심 지표를 계산합니다.",
-    "백테스팅 탭은 추세 전환과 공포지수 전략을 NASDAQ Composite와 비교합니다.",
+    "백테스팅 탭은 여러 매매 전략을 NASDAQ Composite와 비교합니다.",
     "실험실 탭은 매월 같은 금액을 투자했을 때 선택 종목과 NASDAQ Composite의 적립식 성과를 비교합니다.",
   ]);
   renderBacktestTarget(null);

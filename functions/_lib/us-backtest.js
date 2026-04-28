@@ -164,6 +164,71 @@ function averageClose(series, startIndex, length) {
   return sum / length;
 }
 
+function priceReturn(series, endIndex, length) {
+  const startIndex = endIndex - length;
+  const startClose = series[startIndex]?.close;
+  const endClose = series[endIndex]?.close;
+  if (startClose == null || endClose == null || startClose <= 0) return null;
+  return (endClose / startClose - 1) * 100;
+}
+
+function highestClose(series, endIndex, length) {
+  if (endIndex - length + 1 < 0) return null;
+  let high = -Infinity;
+  for (let index = endIndex; index > endIndex - length; index -= 1) {
+    const close = series[index]?.close;
+    if (close == null) return null;
+    high = Math.max(high, close);
+  }
+  return high;
+}
+
+function lowestClose(series, endIndex, length) {
+  if (endIndex - length + 1 < 0) return null;
+  let low = Infinity;
+  for (let index = endIndex; index > endIndex - length; index -= 1) {
+    const close = series[index]?.close;
+    if (close == null) return null;
+    low = Math.min(low, close);
+  }
+  return low;
+}
+
+function computeRsi(series, endIndex, length = 14) {
+  if (endIndex - length < 0) return null;
+  let gains = 0;
+  let losses = 0;
+
+  for (let index = endIndex - length + 1; index <= endIndex; index += 1) {
+    const current = series[index]?.close;
+    const previous = series[index - 1]?.close;
+    if (current == null || previous == null) return null;
+    const change = current - previous;
+    if (change >= 0) gains += change;
+    else losses += Math.abs(change);
+  }
+
+  if (losses === 0) return 100;
+  const rs = gains / losses;
+  return 100 - 100 / (1 + rs);
+}
+
+function annualizedVolatility(series, endIndex, length = 20) {
+  if (endIndex - length < 0) return null;
+  const returns = [];
+
+  for (let index = endIndex - length + 1; index <= endIndex; index += 1) {
+    const current = series[index]?.close;
+    const previous = series[index - 1]?.close;
+    if (current == null || previous == null || previous <= 0) return null;
+    returns.push(Math.log(current / previous));
+  }
+
+  const mean = returns.reduce((sum, value) => sum + value, 0) / returns.length;
+  const variance = returns.reduce((sum, value) => sum + Math.pow(value - mean, 2), 0) / returns.length;
+  return Math.sqrt(variance) * Math.sqrt(252) * 100;
+}
+
 function computeCagrFromValues(startValue, endValue, startDate, endDate) {
   const days = Math.max(
     1,
@@ -188,10 +253,11 @@ function countPositionChanges(points) {
   return trades;
 }
 
-function simulateTrendStrategy(stockSeries, startDate, endDate) {
+function simulateRuleBasedStrategy(stockSeries, startDate, endDate, config) {
   const points = [];
   let portfolioValue = 100;
   let priorPosition = 0;
+  let regime = 0;
 
   for (let index = 0; index < stockSeries.length; index += 1) {
     const row = stockSeries[index];
@@ -204,25 +270,94 @@ function simulateTrendStrategy(stockSeries, startDate, endDate) {
       }
     }
 
-    const sma50 = averageClose(stockSeries, index - 1, 50);
-    const sma200 = averageClose(stockSeries, index - 1, 200);
-    const nextPosition = sma50 != null && sma200 != null && sma50 > sma200 ? 1 : 0;
+    const nextPosition = config.nextPosition(stockSeries, index, regime);
+    if (nextPosition === 0 || nextPosition === 1) {
+      regime = nextPosition;
+    }
 
     points.push({
       date: row.date,
       value: round(portfolioValue),
       position: priorPosition,
-      signal: nextPosition,
+      signal: regime,
     });
 
-    priorPosition = nextPosition;
+    priorPosition = regime;
   }
 
   return {
-    label: "추세 전환 (50일/200일 이동평균)",
-    shortLabel: "추세 전환",
+    label: config.label,
+    shortLabel: config.shortLabel,
     points,
   };
+}
+
+function simulateTrendStrategy(stockSeries, startDate, endDate) {
+  return simulateRuleBasedStrategy(stockSeries, startDate, endDate, {
+    label: "추세 전환 (50일/200일 이동평균)",
+    shortLabel: "추세 전환",
+    nextPosition: (series, index) => {
+      const sma50 = averageClose(series, index - 1, 50);
+      const sma200 = averageClose(series, index - 1, 200);
+      return sma50 != null && sma200 != null && sma50 > sma200 ? 1 : 0;
+    },
+  });
+}
+
+function simulateMomentumStrategy(stockSeries, startDate, endDate) {
+  return simulateRuleBasedStrategy(stockSeries, startDate, endDate, {
+    label: "모멘텀 (3개월 수익률 양수 + 200일선 상회)",
+    shortLabel: "모멘텀",
+    nextPosition: (series, index) => {
+      const previousClose = series[index - 1]?.close;
+      const sma200 = averageClose(series, index - 1, 200);
+      const threeMonthReturn = priceReturn(series, index - 1, 63);
+      return previousClose != null && sma200 != null && threeMonthReturn != null && previousClose > sma200 && threeMonthReturn > 0 ? 1 : 0;
+    },
+  });
+}
+
+function simulateRsiStrategy(stockSeries, startDate, endDate) {
+  return simulateRuleBasedStrategy(stockSeries, startDate, endDate, {
+    label: "RSI 역추세 (RSI 30 이하 매수, 55 이상 매도)",
+    shortLabel: "RSI 역추세",
+    nextPosition: (series, index, regime) => {
+      const rsi = computeRsi(series, index - 1, 14);
+      if (rsi == null) return regime;
+      if (rsi <= 30) return 1;
+      if (rsi >= 55) return 0;
+      return regime;
+    },
+  });
+}
+
+function simulateBreakoutStrategy(stockSeries, startDate, endDate) {
+  return simulateRuleBasedStrategy(stockSeries, startDate, endDate, {
+    label: "돌파 매매 (55일 신고가 매수, 20일 저가 이탈 매도)",
+    shortLabel: "돌파 매매",
+    nextPosition: (series, index, regime) => {
+      const previousClose = series[index - 1]?.close;
+      const priorHigh = highestClose(series, index - 2, 55);
+      const priorLow = lowestClose(series, index - 2, 20);
+      if (previousClose == null) return regime;
+      if (priorHigh != null && previousClose >= priorHigh) return 1;
+      if (priorLow != null && previousClose <= priorLow) return 0;
+      return regime;
+    },
+  });
+}
+
+function simulateLowVolatilityStrategy(stockSeries, startDate, endDate) {
+  return simulateRuleBasedStrategy(stockSeries, startDate, endDate, {
+    label: "저변동성 추세 (20일 변동성 35% 미만 + 100일선 상회)",
+    shortLabel: "저변동성",
+    nextPosition: (series, index) => {
+      const previousClose = series[index - 1]?.close;
+      const sma100 = averageClose(series, index - 1, 100);
+      const volatility = annualizedVolatility(series, index - 1, 20);
+      return previousClose != null && sma100 != null && volatility != null && previousClose > sma100 && volatility < 35 ? 1 : 0;
+    },
+  });
 }
 
 function simulateVixStrategy(stockSeries, vixSeries, startDate, endDate) {
@@ -532,12 +667,13 @@ export async function getUSBacktestDataAny(code, env, years = 0, months = 0, str
   const normalizedYears = Number.isFinite(years) ? Math.max(0, Math.trunc(years)) : 0;
   const normalizedMonths = Number.isFinite(months) ? Math.max(0, Math.trunc(months)) : 0;
   const normalizedStrategy = String(strategy || "trend").toLowerCase();
+  const strategyNames = ["trend", "vix", "momentum", "rsi", "breakout", "lowvol", "all"];
 
   if (normalizedYears === 0 && normalizedMonths === 0) {
     throw new Error("보유 기간은 최소 1개월 이상이어야 합니다.");
   }
-  if (!["trend", "vix"].includes(normalizedStrategy)) {
-    throw new Error("strategy 파라미터는 trend 또는 vix 여야 합니다.");
+  if (!strategyNames.includes(normalizedStrategy)) {
+    throw new Error(`strategy 파라미터는 ${strategyNames.join(", ")} 중 하나여야 합니다.`);
   }
 
   const today = new Date();
@@ -549,7 +685,9 @@ export async function getUSBacktestDataAny(code, env, years = 0, months = 0, str
 
   const stockPromise = loadMetaAndSeries(code, extendedFrom, to, env);
   const benchmarkPromise = loadMetaAndSeries("^IXIC", extendedFrom, to, env);
-  const vixPromise = normalizedStrategy === "vix" ? loadMetaAndSeries("^VIX", extendedFrom, to, env) : Promise.resolve({ series: [] });
+  const vixPromise = ["vix", "all"].includes(normalizedStrategy)
+    ? loadMetaAndSeries("^VIX", extendedFrom, to, env)
+    : Promise.resolve({ series: [] });
 
   const [stockPayload, benchmarkPayload, vixPayload] = await Promise.all([stockPromise, benchmarkPromise, vixPromise]);
   const stockSeries = stockPayload.series;
@@ -562,10 +700,84 @@ export async function getUSBacktestDataAny(code, env, years = 0, months = 0, str
     throw new Error("백테스트 기간에 필요한 종목 가격 데이터가 부족합니다.");
   }
 
-  const strategyResult =
-    normalizedStrategy === "trend"
-      ? simulateTrendStrategy(stockSeries, stockStart.date, stockEnd.date)
-      : simulateVixStrategy(stockSeries, vixSeries, stockStart.date, stockEnd.date);
+  const strategyFactories = {
+    trend: () => simulateTrendStrategy(stockSeries, stockStart.date, stockEnd.date),
+    vix: () => simulateVixStrategy(stockSeries, vixSeries, stockStart.date, stockEnd.date),
+    momentum: () => simulateMomentumStrategy(stockSeries, stockStart.date, stockEnd.date),
+    rsi: () => simulateRsiStrategy(stockSeries, stockStart.date, stockEnd.date),
+    breakout: () => simulateBreakoutStrategy(stockSeries, stockStart.date, stockEnd.date),
+    lowvol: () => simulateLowVolatilityStrategy(stockSeries, stockStart.date, stockEnd.date),
+  };
+
+  if (normalizedStrategy === "all") {
+    const strategySummaries = Object.entries(strategyFactories)
+      .map(([key, factory]) => {
+        const result = factory();
+        if (!result.points.length) return null;
+        const benchmark = simulateNasdaqBenchmark(
+          benchmarkSeries,
+          result.points[0].date,
+          result.points[result.points.length - 1].date,
+        );
+        const summary = summarizeStrategyPerformance(result, benchmark);
+        return {
+          key,
+          label: result.label,
+          shortLabel: result.shortLabel,
+          stock: summary.strategy,
+          benchmark: {
+            ...summary.benchmark,
+            code: "^IXIC",
+            name: benchmarkPayload.meta?.longName || "NASDAQ Composite",
+          },
+          excessCagr: summary.excessCagr,
+          excessReturn: summary.excessReturn,
+          chartSeries: buildStrategyChartSeries(result.points, benchmark),
+        };
+      })
+      .filter(Boolean)
+      .sort((a, b) => b.excessCagr - a.excessCagr);
+
+    if (!strategySummaries.length) {
+      throw new Error("전략 백테스트를 계산할 데이터가 부족합니다.");
+    }
+
+    const best = strategySummaries[0];
+    return {
+      stock: {
+        code,
+        name: stockPayload.meta?.longName || stockPayload.meta?.shortName || code,
+        assetType: stockPayload.meta?.instrumentType === "ETF" ? "ETF" : undefined,
+      },
+      period: {
+        years: normalizedYears,
+        months: normalizedMonths,
+        startDate: best.stock.startDate,
+        endDate: best.stock.endDate,
+      },
+      result: {
+        stock: best.stock,
+        benchmark: best.benchmark,
+        excessCagr: best.excessCagr,
+        excessReturn: best.excessReturn,
+      },
+      strategy: {
+        key: "all",
+        label: `전체 전략 비교: 최고 성과 ${best.label}`,
+        shortLabel: best.shortLabel,
+      },
+      strategies: strategySummaries.map(({ chartSeries, ...item }) => item),
+      chartSeries: best.chartSeries,
+      notes: [
+        "전체 전략 비교는 같은 종목과 기간에 대해 제공 전략을 모두 계산한 뒤 초과 CAGR 기준으로 정렬합니다.",
+        "차트는 초과 CAGR이 가장 높은 전략과 NASDAQ Composite (^IXIC) 단순 보유 성과를 비교합니다.",
+        "누적수익률은 시작 시점 100 기준 총수익률이며 CAGR은 해당 기간의 연복리 수익률입니다.",
+        `가격 데이터 소스: ${stockPayload.source === "yahoo" ? "Yahoo Finance fallback" : "FMP"} / benchmark ${benchmarkPayload.source === "yahoo" ? "Yahoo Finance fallback" : "FMP"}`,
+      ],
+    };
+  }
+
+  const strategyResult = strategyFactories[normalizedStrategy]();
 
   if (!strategyResult.points.length) {
     throw new Error("전략 백테스트를 계산할 데이터가 부족합니다.");
@@ -608,9 +820,20 @@ export async function getUSBacktestDataAny(code, env, years = 0, months = 0, str
     },
     chartSeries,
     notes: [
-      normalizedStrategy === "trend"
-        ? "추세 전환 전략은 전일 기준 50일 이동평균이 200일 이동평균을 상향 돌파하면 매수 상태로 전환하고, 반대로 내려가면 현금 상태로 전환합니다."
-        : "공포지수 전략은 전일 VIX가 30 이상이면 매수 상태로 전환하고, 20 이하이면 매도 상태로 전환하는 단순 리스크 오프 방식입니다.",
+      {
+        trend:
+          "추세 전환 전략은 전일 기준 50일 이동평균이 200일 이동평균을 상회하면 매수 상태로 전환하고, 반대로 내려가면 현금 상태로 전환합니다.",
+        vix:
+          "공포지수 전략은 전일 VIX가 30 이상이면 매수 상태로 전환하고, 20 이하이면 매도 상태로 전환하는 단순 리스크 오프 방식입니다.",
+        momentum:
+          "모멘텀 전략은 전일 종가가 200일 이동평균 위에 있고 최근 63거래일 수익률이 양수일 때만 매수 상태를 유지합니다.",
+        rsi:
+          "RSI 역추세 전략은 14일 RSI가 30 이하이면 과매도 반등을 기대해 매수하고, 55 이상이면 현금화합니다.",
+        breakout:
+          "돌파 매매 전략은 전일 종가가 직전 55거래일 고가를 넘으면 매수하고, 직전 20거래일 저가를 이탈하면 현금화합니다.",
+        lowvol:
+          "저변동성 추세 전략은 전일 종가가 100일 이동평균 위에 있고 20일 연율화 변동성이 35% 미만일 때만 매수 상태를 유지합니다.",
+      }[normalizedStrategy],
       "비교 기준은 같은 기간의 NASDAQ Composite (^IXIC) 단순 보유 성과입니다.",
       "누적수익률은 시작 시점 100 기준 총수익률이며 CAGR은 해당 기간의 연복리 수익률입니다.",
       `가격 데이터 소스: ${stockPayload.source === "yahoo" ? "Yahoo Finance fallback" : "FMP"} / benchmark ${benchmarkPayload.source === "yahoo" ? "Yahoo Finance fallback" : "FMP"}`,
