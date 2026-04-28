@@ -400,16 +400,11 @@ body {
   border: 1px solid var(--line);
 }
 
-.news-card a {
+.news-card .news-summary {
+  margin: 0;
   color: var(--brand);
   font-weight: 800;
   line-height: 1.45;
-  text-decoration: none;
-}
-
-.news-card a:hover,
-.news-card a:focus-visible {
-  text-decoration: underline;
 }
 
 .news-card p {

@@ -700,69 +700,80 @@ function cleanNewsText(value = "") {
   return textarea.value.replace(/\s+/g, " ").trim();
 }
 
-function localizeNewsTerms(text = "") {
-  const replacements = [
-    [/stock/gi, "주가"],
-    [/stocks/gi, "주식"],
-    [/shares/gi, "주가"],
-    [/market/gi, "시장"],
-    [/earnings/gi, "실적"],
-    [/revenue/gi, "매출"],
-    [/sales/gi, "매출"],
-    [/profit/gi, "이익"],
-    [/quarter/gi, "분기"],
-    [/analyst/gi, "애널리스트"],
-    [/upgrade/gi, "투자의견 상향"],
-    [/upgraded/gi, "투자의견을 상향"],
-    [/downgrade/gi, "투자의견 하향"],
-    [/downgraded/gi, "투자의견을 하향"],
-    [/price target/gi, "목표주가"],
-    [/guidance/gi, "실적 전망"],
-    [/forecast/gi, "전망"],
-    [/dividend/gi, "배당"],
-    [/buyback/gi, "자사주 매입"],
-    [/merger/gi, "합병"],
-    [/acquisition/gi, "인수"],
-    [/lawsuit/gi, "소송"],
-    [/regulatory/gi, "규제"],
-    [/semiconductor/gi, "반도체"],
-    [/technology/gi, "기술"],
-    [/bond/gi, "채권"],
-    [/inflation/gi, "인플레이션"],
-    [/interest rate/gi, "금리"],
-    [/Fed/gi, "연준"],
-    [/rises/gi, "상승"],
-    [/rose/gi, "상승"],
-    [/gains/gi, "상승"],
-    [/jumps/gi, "급등"],
-    [/surges/gi, "급등"],
-    [/falls/gi, "하락"],
-    [/fell/gi, "하락"],
-    [/drops/gi, "하락"],
-    [/slumps/gi, "급락"],
-    [/beats/gi, "예상치 상회"],
-    [/misses/gi, "예상치 하회"],
-  ];
+function hasAny(text, patterns) {
+  return patterns.some((pattern) => pattern.test(text));
+}
 
-  return replacements.reduce((next, [pattern, replacement]) => next.replace(pattern, replacement), text);
+function extractNewsNumbers(text = "") {
+  return [...text.matchAll(/(?:[$€£]\s?\d+(?:[.,]\d+)?(?:\s?(?:billion|million|trillion|bn|m))?|\d+(?:[.,]\d+)?\s?%|\d+(?:[.,]\d+)?\s?(?:billion|million|trillion|bn|m))/gi)]
+    .map((match) => match[0].replace(/\s+/g, " ").trim())
+    .filter((value, index, array) => array.indexOf(value) === index)
+    .slice(0, 3);
+}
+
+function detectNewsTone(text = "") {
+  if (hasAny(text, [/beat/i, /beats/i, /surge/i, /jump/i, /rall/i, /gain/i, /upgrade/i, /raise/i, /record/i, /strong/i, /better than expected/i])) {
+    return "긍정적인 재료로 해석될 수 있습니다.";
+  }
+
+  if (hasAny(text, [/miss/i, /fall/i, /drop/i, /slump/i, /downgrade/i, /cut/i, /weak/i, /lawsuit/i, /probe/i, /investigation/i, /concern/i, /risk/i])) {
+    return "단기 부담 요인으로 해석될 수 있습니다.";
+  }
+
+  return "방향성은 추가 지표와 가격 흐름을 함께 봐야 합니다.";
+}
+
+function detectNewsTopic(text = "") {
+  if (hasAny(text, [/earnings/i, /revenue/i, /profit/i, /margin/i, /quarter/i, /guidance/i, /forecast/i, /outlook/i])) {
+    return "실적과 전망에 관한 소식입니다. 매출, 이익, 마진, 가이던스 변화가 투자 판단에 영향을 줄 수 있습니다.";
+  }
+
+  if (hasAny(text, [/analyst/i, /rating/i, /price target/i, /upgrade/i, /downgrade/i, /initiates/i, /coverage/i])) {
+    return "증권사 의견과 목표주가 조정에 관한 소식입니다. 시장 기대치가 바뀌었는지 확인할 필요가 있습니다.";
+  }
+
+  if (hasAny(text, [/why .+ stock/i, /shares/i, /stock/i, /rises/i, /rose/i, /falls/i, /fell/i, /drops/i, /jumps/i, /surges/i, /slumps/i, /trading/i])) {
+    return "주가 변동 배경을 다룬 소식입니다. 단기 수급과 뉴스 반응이 가격에 반영되는 구간입니다.";
+  }
+
+  if (hasAny(text, [/dividend/i, /yield/i, /buyback/i, /repurchase/i, /split/i])) {
+    return "주주환원 정책에 관한 소식입니다. 배당, 자사주 매입, 주식분할 여부가 투자 매력도에 영향을 줄 수 있습니다.";
+  }
+
+  if (hasAny(text, [/merger/i, /acquisition/i, /deal/i, /takeover/i, /partnership/i])) {
+    return "인수합병이나 협력 관련 소식입니다. 거래 조건과 시너지 기대가 핵심 확인 포인트입니다.";
+  }
+
+  if (hasAny(text, [/lawsuit/i, /regulatory/i, /probe/i, /investigation/i, /approval/i, /ban/i, /tariff/i])) {
+    return "규제나 법적 이슈에 관한 소식입니다. 비용 증가와 사업 지연 가능성을 확인해야 합니다.";
+  }
+
+  if (hasAny(text, [/fed/i, /inflation/i, /interest rate/i, /bond/i, /treasury/i, /jobs/i, /economy/i, /recession/i])) {
+    return "거시경제와 금리 환경에 관한 소식입니다. 성장주와 위험자산의 밸류에이션에 영향을 줄 수 있습니다.";
+  }
+
+  if (hasAny(text, [/etf/i, /fund/i, /inflow/i, /outflow/i, /holding/i])) {
+    return "ETF와 펀드 흐름에 관한 소식입니다. 자금 유입, 보유 종목 변화, 섹터 비중을 함께 확인해야 합니다.";
+  }
+
+  if (hasAny(text, [/ai/i, /chip/i, /semiconductor/i, /cloud/i, /software/i, /data center/i, /product/i, /launch/i])) {
+    return "기술과 제품 경쟁력에 관한 소식입니다. 수요 확대와 경쟁 구도 변화가 핵심입니다.";
+  }
+
+  return "해당 종목과 관련된 최신 소식입니다. 세부 내용보다 투자 판단에 영향을 줄 만한 재료가 나왔는지 확인하는 용도로 보면 됩니다.";
 }
 
 function buildKoreanNewsSummary(item) {
   const title = cleanNewsText(item.title);
   const body = cleanNewsText(item.summary);
   const sourceText = [title, body].filter(Boolean).join(". ");
-  const compact = localizeNewsTerms(sourceText).replace(/\s+/g, " ").trim();
-  const sentences = compact
-    .split(/(?<=[.!?])\s+/)
-    .map((sentence) => sentence.replace(/[.!?]+$/, "").trim())
-    .filter(Boolean)
-    .slice(0, 2);
+  const compact = sourceText.replace(/\s+/g, " ").trim();
+  const topic = detectNewsTopic(compact);
+  const tone = detectNewsTone(compact);
+  const numbers = extractNewsNumbers(compact);
+  const numberNote = numbers.length ? ` 기사에 언급된 주요 수치는 ${numbers.join(", ")}입니다.` : "";
 
-  if (!sentences.length) return "관련 뉴스 원문을 확인해 세부 내용을 살펴보세요.";
-  if (sentences[1] && sentences[1] !== sentences[0]) {
-    return `요약: ${sentences[0]}. 추가로 ${sentences[1]}.`;
-  }
-  return `요약: ${sentences[0]}.`;
+  return `요약: ${topic} ${tone}${numberNote}`;
 }
 
 function renderNews(news = []) {
@@ -780,7 +791,7 @@ function renderNews(news = []) {
         const koreanSummary = buildKoreanNewsSummary(item);
         return `
         <article class="news-card">
-          <a href="${escapeHtml(item.url)}" target="_blank" rel="noreferrer">${escapeHtml(koreanSummary)}</a>
+          <p class="news-summary">${escapeHtml(koreanSummary)}</p>
           <div class="news-meta">
             <span>${escapeHtml(item.site || "뉴스")}</span>
             <span>${escapeHtml(item.publishedAt || "날짜 없음")}</span>
