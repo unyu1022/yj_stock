@@ -17,6 +17,10 @@ This repository includes a first-pass Telegram polling bridge.
    - `CODEX_WORKSPACE` (optional, defaults to this repository root)
    - `CODEX_RUN_TIMEOUT_SECONDS` (optional, default `900`)
    - `CODEX_COMMAND` (optional, set this explicitly on Windows if PATH differs)
+   - `CODEX_SANDBOX` (optional, default `workspace-write`; Codex should edit files, not push)
+   - `GIT_COMMAND` (optional, default `C:\Program Files\Git\cmd\git.exe`)
+   - `GIT_USER_NAME`
+   - `GIT_USER_EMAIL`
 3. Run:
 
 ```powershell
@@ -61,7 +65,9 @@ powershell -ExecutionPolicy Bypass -File .\unregister_telegram_bridge_task.ps1
 
 - Accepts messages only from the configured `chat_id`
 - Supports `/start`, `/help`, `/ping`, `/status`, `/run <text>`
+- Supports `/gitstatus`, `/push <커밋 메시지>` for direct Git publish outside Codex
 - `/run` executes `codex exec` inside the configured workspace
+- The bridge defaults Codex sandbox to `workspace-write`; after a successful Codex run, the bridge directly commits and pushes changed files to `origin/main`
 - The bridge uses `--skip-git-repo-check` so it can run in a non-Git workspace
 - Only one Codex task runs at a time
 - The bridge sends the final Codex summary back to Telegram

@@ -42,6 +42,10 @@ def get_config() -> dict[str, str]:
     codex_timeout = os.environ.get("CODEX_RUN_TIMEOUT_SECONDS") or file_values.get("CODEX_RUN_TIMEOUT_SECONDS", "900")
     codex_workspace = os.environ.get("CODEX_WORKSPACE") or file_values.get("CODEX_WORKSPACE", str(DEFAULT_WORKSPACE_PATH))
     codex_command = os.environ.get("CODEX_COMMAND") or file_values.get("CODEX_COMMAND", "")
+    codex_sandbox = os.environ.get("CODEX_SANDBOX") or file_values.get("CODEX_SANDBOX", "workspace-write")
+    git_command = os.environ.get("GIT_COMMAND") or file_values.get("GIT_COMMAND", "")
+    git_user_name = os.environ.get("GIT_USER_NAME") or file_values.get("GIT_USER_NAME", "unyu1022")
+    git_user_email = os.environ.get("GIT_USER_EMAIL") or file_values.get("GIT_USER_EMAIL", "kyj921022@gmail.com")
 
     if not token:
         raise RuntimeError(
@@ -59,6 +63,10 @@ def get_config() -> dict[str, str]:
         "codex_timeout": codex_timeout,
         "codex_workspace": codex_workspace,
         "codex_command": codex_command,
+        "codex_sandbox": codex_sandbox,
+        "git_command": git_command,
+        "git_user_name": git_user_name,
+        "git_user_email": git_user_email,
     }
 
 
@@ -149,6 +157,8 @@ def build_help_text() -> str:
             "/ping - 봇 응답 확인",
             "/run <내용> - Codex CLI로 작업 실행",
             "/runraw <내용> - Codex 최종 답변만 그대로 전송",
+            "/push <커밋 메시지> - 브리지가 직접 git add/commit/push 실행",
+            "/gitstatus - 현재 Git 상태 확인",
             ". <내용> - /runraw 와 동일",
             "/ <내용> - /runraw 와 동일",
             "일반 메시지 - /runraw 와 동일",
@@ -184,6 +194,34 @@ def resolve_codex_command(config: dict[str, str]) -> str | None:
         if candidate.lower().endswith(".ps1"):
             if Path(candidate).exists():
                 return candidate
+            continue
+        if Path(candidate).exists():
+            return candidate
+        resolved = shutil.which(candidate)
+        if resolved:
+            return resolved
+
+    return None
+
+
+def resolve_git_command(config: dict[str, str]) -> str | None:
+    configured = config.get("git_command", "").strip()
+    candidates: list[str] = []
+
+    if configured:
+        candidates.append(configured)
+
+    candidates.extend(
+        [
+            shutil.which("git.exe") or "",
+            shutil.which("git") or "",
+            r"C:\Program Files\Git\cmd\git.exe",
+            r"C:\Program Files\Git\bin\git.exe",
+        ]
+    )
+
+    for candidate in candidates:
+        if not candidate:
             continue
         if Path(candidate).exists():
             return candidate
@@ -244,12 +282,13 @@ def build_codex_prompt(payload: str, retry: bool = False) -> str:
     base_prompt = (
         "아래 작업을 지금 바로 수행하고, 최종 답변만 한국어로 작성하세요.\n"
         "작업 폴더 안의 파일을 읽거나 명령을 실행해 실제 결과를 확인한 뒤 답하세요.\n"
+        "Git 명령이 필요하면 `C:\\Program Files\\Git\\cmd\\git.exe` 절대경로를 우선 사용하세요.\n"
         "지시를 이해했다는 말, 앞으로 하겠다는 말, 작업 계획은 금지합니다.\n"
         "영어로 답하지 마세요.\n"
         "최종 답변은 바로 결과부터 시작하세요.\n"
         "분석 요청이면 분석 결과를, 수정 요청이면 수정 결과를 적으세요.\n"
         "Cloudflare 직접 배포는 시도하지 마세요. `wrangler deploy`, `deploy_cloudflare.cmd`, `npx wrangler deploy`를 실행하지 마세요.\n"
-        "배포가 필요한 경우에는 코드를 수정한 뒤 GitHub origin/main 에 커밋과 push를 수행해 Cloudflare Git 자동 배포가 돌도록 처리하세요.\n"
+        "배포가 필요한 경우에도 Codex가 직접 commit/push 하지 마세요. 코드 수정까지만 수행하면 Telegram 브리지가 직접 GitHub origin/main 에 commit/push 합니다.\n"
         "실제로 불가능한 경우에만 짧게 이유를 적으세요.\n\n"
         f"작업:\n{payload}\n"
     )
@@ -268,6 +307,7 @@ def build_codex_prompt(payload: str, retry: bool = False) -> str:
 def execute_codex_command(
     workspace: Path,
     codex_command: str,
+    sandbox_mode: str,
     prompt: str,
     output_file: Path,
     timeout_seconds: int,
@@ -284,7 +324,7 @@ def execute_codex_command(
             "--json",
             "--full-auto",
             "--sandbox",
-            "workspace-write",
+            sandbox_mode,
             "--skip-git-repo-check",
             "--output-last-message",
             str(output_file),
@@ -299,7 +339,7 @@ def execute_codex_command(
             "--json",
             "--full-auto",
             "--sandbox",
-            "workspace-write",
+            sandbox_mode,
             "--skip-git-repo-check",
             "--output-last-message",
             str(output_file),
@@ -358,9 +398,127 @@ def parse_codex_result(completed: subprocess.CompletedProcess[str], output_file:
     return final_message, event_count, stderr_text
 
 
+def run_git_command(
+    workspace: Path,
+    git_command: str,
+    args: list[str],
+    timeout_seconds: int = 120,
+) -> subprocess.CompletedProcess[str]:
+    command = [git_command, *args]
+    return subprocess.run(
+        command,
+        cwd=workspace,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=timeout_seconds,
+    )
+
+
+def build_bridge_commit_message(payload: str) -> str:
+    normalized = " ".join(payload.strip().split())
+    if not normalized:
+        return "Update from Telegram bridge"
+
+    if len(normalized) > 80:
+        normalized = normalized[:77].rstrip() + "..."
+    return f"Telegram bridge: {normalized}"
+
+
+def publish_git_changes(config: dict[str, str], commit_message: str) -> tuple[bool, str]:
+    workspace = Path(config["codex_workspace"]).resolve()
+    git_command = resolve_git_command(config)
+    if not git_command:
+        return False, "git 실행 파일을 찾지 못했습니다."
+
+    if not commit_message:
+        commit_message = "Update from Telegram bridge"
+
+    config_name = run_git_command(workspace, git_command, ["config", "user.name", config["git_user_name"]])
+    config_email = run_git_command(workspace, git_command, ["config", "user.email", config["git_user_email"]])
+    if config_name.returncode != 0 or config_email.returncode != 0:
+        return False, "git 사용자 정보 설정에 실패했습니다."
+
+    add_result = run_git_command(workspace, git_command, ["add", "-A"])
+    if add_result.returncode != 0:
+        return False, f"git add 실패:\n{add_result.stderr.strip() or add_result.stdout.strip()}"
+
+    status_result = run_git_command(workspace, git_command, ["status", "--short"])
+    if status_result.returncode != 0:
+        return False, f"git status 실패:\n{status_result.stderr.strip() or status_result.stdout.strip()}"
+
+    if not status_result.stdout.strip():
+        return True, "커밋할 변경 사항이 없습니다."
+
+    commit_result = run_git_command(workspace, git_command, ["commit", "-m", commit_message], timeout_seconds=180)
+    if commit_result.returncode != 0:
+        return False, f"git commit 실패:\n{commit_result.stderr.strip() or commit_result.stdout.strip()}"
+
+    push_result = run_git_command(workspace, git_command, ["push", "origin", "main"], timeout_seconds=300)
+    if push_result.returncode != 0:
+        details = push_result.stderr.strip() or push_result.stdout.strip()
+        return False, f"git push 실패:\n{details}"
+
+    head_result = run_git_command(workspace, git_command, ["rev-parse", "--short", "HEAD"])
+    head_sha = head_result.stdout.strip() if head_result.returncode == 0 else "(unknown)"
+    return True, f"git push 완료\n커밋: {head_sha}\nCloudflare Git 자동 배포가 이어서 실행됩니다."
+
+
+def handle_git_status(token: str, allowed_chat_id: str, config: dict[str, str]) -> None:
+    workspace = Path(config["codex_workspace"]).resolve()
+    git_command = resolve_git_command(config)
+    if not git_command:
+        send_message(token, allowed_chat_id, "git 실행 파일을 찾지 못했습니다.")
+        return
+
+    try:
+        completed = run_git_command(workspace, git_command, ["status", "--short", "--branch"])
+    except Exception as exc:
+        send_message(token, allowed_chat_id, f"git status 실행 실패: {type(exc).__name__}: {exc}")
+        return
+
+    if completed.returncode != 0:
+        send_message(token, allowed_chat_id, f"git status 실패:\n{completed.stderr.strip() or completed.stdout.strip()}")
+        return
+
+    output = completed.stdout.strip() or "변경 사항이 없습니다."
+    send_message(token, allowed_chat_id, f"Git 상태\n경로: {git_command}\n\n{output}")
+
+
+def handle_git_push(token: str, allowed_chat_id: str, commit_message: str, config: dict[str, str]) -> None:
+    workspace = Path(config["codex_workspace"]).resolve()
+    git_command = resolve_git_command(config)
+    if not git_command:
+        send_message(token, allowed_chat_id, "git 실행 파일을 찾지 못했습니다.")
+        return
+
+    if not commit_message:
+        commit_message = "Update from Telegram bridge"
+
+    send_message(
+        token,
+        allowed_chat_id,
+        "\n".join(
+            [
+                "Git push 시작",
+                f"git 경로: {git_command}",
+                f"작업 폴더: {workspace}",
+                f"커밋 메시지: {commit_message}",
+            ]
+        ),
+    )
+
+    try:
+        ok, message = publish_git_changes(config, commit_message)
+        send_message(token, allowed_chat_id, message)
+    except Exception as exc:
+        send_message(token, allowed_chat_id, f"git push 처리 중 예외 발생: {type(exc).__name__}: {exc}")
+
+
 def run_codex_task(token: str, allowed_chat_id: str, payload: str, config: dict[str, str], raw_only: bool = False) -> None:
     workspace = Path(config["codex_workspace"]).resolve()
     timeout_seconds = int(config["codex_timeout"])
+    sandbox_mode = config["codex_sandbox"]
     output_file = workspace / ".telegram-codex-last-message.txt"
     codex_command = resolve_codex_command(config)
 
@@ -382,6 +540,7 @@ def run_codex_task(token: str, allowed_chat_id: str, payload: str, config: dict[
                 "Codex 실행 시작",
                 f"실행 파일: {codex_command}",
                 f"작업 폴더: {workspace}",
+                f"샌드박스: {sandbox_mode}",
                 f"제한 시간: {timeout_seconds}초",
             ]
         ),
@@ -394,6 +553,7 @@ def run_codex_task(token: str, allowed_chat_id: str, payload: str, config: dict[
         completed, launch_error = execute_codex_command(
             workspace=workspace,
             codex_command=codex_command,
+            sandbox_mode=sandbox_mode,
             prompt=build_codex_prompt(payload, retry=retry),
             output_file=output_file,
             timeout_seconds=timeout_seconds,
@@ -408,6 +568,13 @@ def run_codex_task(token: str, allowed_chat_id: str, payload: str, config: dict[
 
         if completed.returncode == 0 and not is_acknowledgement_only(final_message):
             response_text = final_message.strip() if raw_only else format_codex_summary(payload, final_message, event_count)
+            try:
+                ok, publish_message = publish_git_changes(config, build_bridge_commit_message(payload))
+            except Exception as exc:
+                ok = False
+                publish_message = f"git push 처리 중 예외 발생: {type(exc).__name__}: {exc}"
+            if publish_message and publish_message != "커밋할 변경 사항이 없습니다.":
+                response_text = "\n\n".join([response_text or "", "브리지 Git 처리", publish_message]).strip()
             send_message(token, allowed_chat_id, response_text or "최종 메시지를 받지 못했습니다.")
             return
 
@@ -463,9 +630,19 @@ def handle_text_message(token: str, allowed_chat_id: str, text: str, config: dic
             [
                 busy_text,
                 f"Codex 경로: {path_text}",
+                f"Codex 샌드박스: {config['codex_sandbox']}",
             ]
         )
         send_message(token, allowed_chat_id, status_text)
+        return
+
+    if normalized.startswith("/gitstatus"):
+        handle_git_status(token, allowed_chat_id, config)
+        return
+
+    if normalized.startswith("/push"):
+        commit_message = normalized[5:].strip()
+        handle_git_push(token, allowed_chat_id, commit_message, config)
         return
 
     if normalized.startswith("/runraw"):

@@ -1,7 +1,7 @@
 {
   "name": "Stock Insight PWA",
   "short_name": "Stock Insight",
-  "description": "국내 주식과 미국 주식을 검색하고 실데이터 기반 7가지 지표와 최근 1년 분기 흐름을 확인하는 투자 인사이트 앱",
+  "description": "미국 주식을 검색하고 실데이터 기반 7가지 지표와 최근 1년 분기 흐름을 확인하는 투자 인사이트 앱",
   "start_url": "./",
   "display": "standalone",
   "background_color": "#f3efe4",

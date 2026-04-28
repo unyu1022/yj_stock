@@ -1,12 +1,11 @@
 const state = {
-  market: "KR",
+  market: "US",
   selectedStock: null,
   stockData: null,
   searchTimer: null,
 };
 
 const ui = {
-  marketTabs: document.querySelector("#marketTabs"),
   searchInput: document.querySelector("#stock-search"),
   searchResults: document.querySelector("#search-results"),
   selectionSummary: document.querySelector("#selection-summary"),
@@ -116,12 +115,6 @@ function buildOutlook(history) {
     title: "혼합 신호 구간",
     body: "좋아지는 지표와 둔화되는 지표가 함께 보입니다. 단일 지표보다 분기별 추세와 업종 평균을 같이 보는 것이 좋습니다.",
   };
-}
-
-function renderMarketTabs() {
-  [...ui.marketTabs.querySelectorAll(".market-tab")].forEach((button) => {
-    button.classList.toggle("active", button.dataset.market === state.market);
-  });
 }
 
 function setLoading(message) {
@@ -318,27 +311,6 @@ function attachEvents() {
     scheduleSearch(event.target.value.trim());
   });
 
-  ui.marketTabs.addEventListener("click", (event) => {
-    const button = event.target.closest(".market-tab");
-    if (!button) return;
-    state.market = button.dataset.market;
-    state.selectedStock = null;
-    state.stockData = null;
-    ui.searchInput.value = "";
-    renderMarketTabs();
-    ui.selectionSummary.innerHTML = "";
-    ui.metricGrid.innerHTML = "";
-    ui.quarterlyTrend.innerHTML = "";
-    ui.insightSummary.classList.add("empty-state");
-    ui.insightSummary.textContent = "종목을 선택하면 현재 평가와 전망이 표시됩니다.";
-    renderNotes([
-      "현재 버전은 Cloudflare Pages Functions를 통해 실데이터를 조회합니다.",
-      "국내 주식은 OpenDART 인증키가 필요합니다.",
-      "미국 주식은 Alpha Vantage API 키와 SEC용 User-Agent 정보가 필요합니다.",
-    ]);
-    loadSearchResults("").catch(() => {});
-  });
-
   document.body.addEventListener("click", (event) => {
     const button = event.target.closest(".search-result[data-code]");
     if (!button) return;
@@ -354,10 +326,8 @@ function registerServiceWorker() {
 }
 
 function boot() {
-  renderMarketTabs();
   renderNotes([
     "현재 버전은 Cloudflare Pages Functions를 통해 실데이터를 조회합니다.",
-    "국내 주식은 OpenDART 인증키가 필요합니다.",
     "미국 주식은 Alpha Vantage API 키와 SEC용 User-Agent 정보가 필요합니다.",
   ]);
   attachEvents();
