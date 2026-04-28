@@ -691,6 +691,80 @@ function renderPriceChart(priceChart = [], stock = null) {
   `;
 }
 
+function cleanNewsText(value = "") {
+  const textarea = document.createElement("textarea");
+  textarea.innerHTML = String(value)
+    .replace(/<[^>]*>/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  return textarea.value.replace(/\s+/g, " ").trim();
+}
+
+function localizeNewsTerms(text = "") {
+  const replacements = [
+    [/stock/gi, "주가"],
+    [/stocks/gi, "주식"],
+    [/shares/gi, "주가"],
+    [/market/gi, "시장"],
+    [/earnings/gi, "실적"],
+    [/revenue/gi, "매출"],
+    [/sales/gi, "매출"],
+    [/profit/gi, "이익"],
+    [/quarter/gi, "분기"],
+    [/analyst/gi, "애널리스트"],
+    [/upgrade/gi, "투자의견 상향"],
+    [/upgraded/gi, "투자의견을 상향"],
+    [/downgrade/gi, "투자의견 하향"],
+    [/downgraded/gi, "투자의견을 하향"],
+    [/price target/gi, "목표주가"],
+    [/guidance/gi, "실적 전망"],
+    [/forecast/gi, "전망"],
+    [/dividend/gi, "배당"],
+    [/buyback/gi, "자사주 매입"],
+    [/merger/gi, "합병"],
+    [/acquisition/gi, "인수"],
+    [/lawsuit/gi, "소송"],
+    [/regulatory/gi, "규제"],
+    [/semiconductor/gi, "반도체"],
+    [/technology/gi, "기술"],
+    [/bond/gi, "채권"],
+    [/inflation/gi, "인플레이션"],
+    [/interest rate/gi, "금리"],
+    [/Fed/gi, "연준"],
+    [/rises/gi, "상승"],
+    [/rose/gi, "상승"],
+    [/gains/gi, "상승"],
+    [/jumps/gi, "급등"],
+    [/surges/gi, "급등"],
+    [/falls/gi, "하락"],
+    [/fell/gi, "하락"],
+    [/drops/gi, "하락"],
+    [/slumps/gi, "급락"],
+    [/beats/gi, "예상치 상회"],
+    [/misses/gi, "예상치 하회"],
+  ];
+
+  return replacements.reduce((next, [pattern, replacement]) => next.replace(pattern, replacement), text);
+}
+
+function buildKoreanNewsSummary(item) {
+  const title = cleanNewsText(item.title);
+  const body = cleanNewsText(item.summary);
+  const sourceText = [title, body].filter(Boolean).join(". ");
+  const compact = localizeNewsTerms(sourceText).replace(/\s+/g, " ").trim();
+  const sentences = compact
+    .split(/(?<=[.!?])\s+/)
+    .map((sentence) => sentence.replace(/[.!?]+$/, "").trim())
+    .filter(Boolean)
+    .slice(0, 2);
+
+  if (!sentences.length) return "관련 뉴스 원문을 확인해 세부 내용을 살펴보세요.";
+  if (sentences[1] && sentences[1] !== sentences[0]) {
+    return `요약: ${sentences[0]}. 추가로 ${sentences[1]}.`;
+  }
+  return `요약: ${sentences[0]}.`;
+}
+
 function renderNews(news = []) {
   const items = Array.isArray(news) ? news : [];
   if (!items.length) {
@@ -702,16 +776,18 @@ function renderNews(news = []) {
   ui.newsList.classList.remove("empty-state");
   ui.newsList.innerHTML = items
     .map(
-      (item) => `
+      (item) => {
+        const koreanSummary = buildKoreanNewsSummary(item);
+        return `
         <article class="news-card">
-          <a href="${escapeHtml(item.url)}" target="_blank" rel="noreferrer">${escapeHtml(item.title)}</a>
+          <a href="${escapeHtml(item.url)}" target="_blank" rel="noreferrer">${escapeHtml(koreanSummary)}</a>
           <div class="news-meta">
             <span>${escapeHtml(item.site || "뉴스")}</span>
             <span>${escapeHtml(item.publishedAt || "날짜 없음")}</span>
           </div>
-          ${item.summary ? `<p>${escapeHtml(item.summary)}</p>` : ""}
         </article>
-      `,
+      `;
+      },
     )
     .join("");
 }
