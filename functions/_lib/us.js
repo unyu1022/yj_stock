@@ -7,6 +7,7 @@ const SEC_TICKERS_URL = "https://www.sec.gov/files/company_tickers_exchange.json
 const FMP_BASE_URL = "https://financialmodelingprep.com/stable";
 const STOCKANALYSIS_STOCK_URL = "https://stockanalysis.com/stocks";
 const ETF_LIST_TTL = 6 * 60 * 60 * 1000;
+const NEWS_TTL = 30 * 60 * 1000;
 const POPULAR_ETF_FALLBACK = [
   ["QQQ", "Invesco QQQ Trust", "NASDAQ"],
   ["SPY", "SPDR S&P 500 ETF Trust", "NYSE ARCA"],
@@ -464,6 +465,7 @@ function buildRateLimitedStockFallback({
   incomeReports,
   balanceReports,
   scrapedMetrics,
+  news = [],
 }) {
   const today = new Date().toISOString().slice(0, 10);
   const latestPrice = toNumber(quote.price) ?? findPriceOnOrBefore(priceHistory, today);
@@ -504,6 +506,8 @@ function buildRateLimitedStockFallback({
       metricDefinitions,
     },
     history: [],
+    priceChart: buildDailyPriceChart(priceHistory),
+    news,
     summaryNote:
       "FMP 분기 재무 호출이 제한되어 현재 시점 기준 보조 소스로 핵심지표를 복구했습니다. 분기 히스토리는 일시적으로 비어 있을 수 있습니다.",
     notes: [
@@ -625,6 +629,10 @@ function summarizeUS(history) {
 }
 
 async function getUSEtfData(code, env, stockMeta = null) {
+  const today = new Date();
+  const from = new Date(today);
+  from.setUTCMonth(from.getUTCMonth() - 4);
+
   const [quoteResult, profileResult, infoResult, holdingsResult, sectorResult] = await Promise.allSettled([
     fmpFetch("/quote", { symbol: code }, env),
     fmpFetch("/profile", { symbol: code }, env),
@@ -638,8 +646,22 @@ async function getUSEtfData(code, env, stockMeta = null) {
   const infoData = infoResult.status === "fulfilled" ? infoResult.value : [];
   const holdingsData = holdingsResult.status === "fulfilled" ? holdingsResult.value : [];
   const sectorData = sectorResult.status === "fulfilled" ? sectorResult.value : [];
+  const [priceData, news] = await Promise.all([
+    fmpFetch(
+      "/historical-price-eod/full",
+      {
+        symbol: code,
+        serietype: "line",
+        from: from.toISOString().slice(0, 10),
+        to: today.toISOString().slice(0, 10),
+      },
+      env,
+    ).catch(() => []),
+    fetchFmpNews(code, env).catch(() => []),
+  ]);
   const quote = Array.isArray(quoteData) ? quoteData[0] ?? {} : quoteData ?? {};
   const profile = Array.isArray(profileData) ? profileData[0] ?? {} : profileData ?? {};
+  const priceHistory = Array.isArray(priceData) ? priceData : Array.isArray(priceData?.historical) ? priceData.historical : [];
   const info = normalizeEtfInfoRow(Array.isArray(infoData) ? infoData[0] ?? {} : infoData ?? {});
   const holdings = normalizeEtfHoldings(holdingsData);
   const sectorWeights = normalizeEtfSectorWeights(sectorData);
@@ -663,6 +685,8 @@ async function getUSEtfData(code, env, stockMeta = null) {
       sectorWeights,
     },
     history: [],
+    priceChart: buildDailyPriceChart(priceHistory),
+    news,
     summaryNote:
       "ETF는 개별 기업 재무제표 기반 7개 지표를 그대로 적용하기 어렵습니다. 이 화면에서는 ETF임을 표시하고, 백테스팅 탭에서 가격 기반 전략 검증에 집중하는 편이 적절합니다.",
     notes: [
@@ -726,6 +750,7 @@ export async function getUSStockData(code, env, selectedName = "") {
   const priceHistory = sortDescendingByDate(
     Array.isArray(priceData) ? priceData : Array.isArray(priceData?.historical) ? priceData.historical : [],
   );
+  const news = await fetchFmpNews(code, env).catch(() => []);
   const dividendHistory = sortDescendingByDate(
     Array.isArray(dividendData) ? dividendData : Array.isArray(dividendData?.historical) ? dividendData.historical : [],
   );
@@ -764,6 +789,7 @@ export async function getUSStockData(code, env, selectedName = "") {
       incomeReports,
       balanceReports,
       scrapedMetrics,
+      news,
     });
   }
 
@@ -810,6 +836,8 @@ export async function getUSStockData(code, env, selectedName = "") {
       metricDefinitions,
     },
     history,
+    priceChart: buildDailyPriceChart(priceHistory),
+    news,
     summaryNote: summarizeUS(history),
     notes: [
       "미국 주식 검색은 SEC company_tickers_exchange.json을 사용합니다.",
@@ -826,6 +854,61 @@ export async function getUSStockData(code, env, selectedName = "") {
 
 function sortAscendingByDate(items) {
   return [...items].sort((a, b) => String(a.date || "").localeCompare(String(b.date || "")));
+}
+
+function buildDailyPriceChart(priceHistory, limit = 60) {
+  const rows = sortAscendingByDate(priceHistory)
+    .map((row) => ({
+      date: row.date,
+      close: round(toNumber(row.close) ?? toNumber(row.adjClose) ?? toNumber(row.price)),
+      volume: toNumber(row.volume),
+    }))
+    .filter((row) => row.date && row.close != null)
+    .slice(-limit);
+
+  return rows.map((row, index) => {
+    const previous = rows[index - 1]?.close ?? null;
+    return {
+      ...row,
+      changePercent: previous ? round(((row.close / previous) - 1) * 100) : null,
+    };
+  });
+}
+
+function normalizeNewsRow(row) {
+  if (!row || typeof row !== "object") return null;
+  const title = String(row.title || row.headline || "").trim();
+  const url = String(row.url || row.link || "").trim();
+  if (!title || !url) return null;
+
+  return {
+    title,
+    url,
+    site: String(row.site || row.publisher || row.source || "").trim(),
+    publishedAt: String(row.publishedDate || row.date || row.datetime || "").trim(),
+    summary: String(row.text || row.summary || row.snippet || "").replace(/\s+/g, " ").trim().slice(0, 220),
+  };
+}
+
+async function fetchFmpNews(code, env) {
+  if (!env.FMP_API_KEY) return [];
+
+  const candidates = [
+    ["/news/stock-latest", { symbols: code, limit: "5" }],
+    ["/stock-news", { tickers: code, limit: "5" }],
+  ];
+
+  for (const [path, params] of candidates) {
+    try {
+      const rows = await fmpFetch(path, params, env, NEWS_TTL);
+      const news = (Array.isArray(rows) ? rows : []).map(normalizeNewsRow).filter(Boolean).slice(0, 5);
+      if (news.length) return news;
+    } catch {
+      // Some FMP plans expose only one of the news endpoints.
+    }
+  }
+
+  return [];
 }
 
 function subtractPeriod(date, years, months) {

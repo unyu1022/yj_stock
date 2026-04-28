@@ -18,10 +18,10 @@
     <div class="app-shell">
       <header class="hero">
         <p class="eyebrow">US Equity PWA</p>
-        <h1>미국 주식 분석과<br />백테스팅 준비</h1>
+        <h1>미국 주식·ETF 분석과<br />백테스팅 준비</h1>
         <p class="hero-copy">
-          미국 주식 한 종목을 검색해 7가지 핵심 지표와 최근 1년 분기 흐름을 확인하고,
-          이어서 같은 종목 기준으로 백테스팅 조건까지 준비할 수 있게 구성한 모바일 전용 화면입니다.
+          미국 주식이나 ETF를 검색해 주요 지표, 전망, 최근 일일 가격 흐름, 관련 뉴스를 확인하고,
+          이어서 같은 티커 기준으로 백테스팅 조건까지 준비할 수 있게 구성한 모바일 전용 화면입니다.
         </p>
       </header>
 
@@ -29,10 +29,10 @@
         <section class="panel controls">
           <div class="section-heading">
             <p class="section-kicker">Search</p>
-            <h2>미국 주식 선택</h2>
+            <h2>미국 주식·ETF 선택</h2>
           </div>
 
-          <label class="field-label" for="stock-search">종목 검색</label>
+          <label class="field-label" for="stock-search">종목·ETF 검색</label>
           <div class="search-input-wrap">
             <input
               id="stock-search"
@@ -65,10 +65,30 @@
           <section class="panel overview">
             <div class="section-heading">
               <p class="section-kicker">Overview</p>
-              <h2>현재 평가와 전망</h2>
+              <h2>주요 분석과 전망</h2>
             </div>
             <div id="insightSummary" class="compare-summary empty-state">
-              종목을 선택하면 현재 평가와 전망이 표시됩니다.
+              종목이나 ETF를 선택하면 주요 분석과 전망이 표시됩니다.
+            </div>
+          </section>
+
+          <section class="panel price-panel">
+            <div class="section-heading">
+              <p class="section-kicker">Daily Chart</p>
+              <h2>최근 가격 변동</h2>
+            </div>
+            <div id="priceChart" class="chart-card empty-state">
+              종목이나 ETF를 선택하면 최근 일일 가격 차트가 표시됩니다.
+            </div>
+          </section>
+
+          <section class="panel news-panel">
+            <div class="section-heading">
+              <p class="section-kicker">News</p>
+              <h2>관련 뉴스</h2>
+            </div>
+            <div id="newsList" class="news-list empty-state">
+              종목이나 ETF를 선택하면 관련 뉴스가 표시됩니다.
             </div>
           </section>
 

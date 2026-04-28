@@ -236,6 +236,15 @@ body {
   color: var(--muted);
 }
 
+.detail-list {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding-left: 18px;
+  color: var(--muted);
+  line-height: 1.65;
+}
+
 .loading-card,
 .error-card {
   padding: 18px;
@@ -313,6 +322,16 @@ body {
   color: #935111;
 }
 
+.tag-good {
+  background: rgba(24, 121, 78, 0.1);
+  color: var(--good);
+}
+
+.tag-bad {
+  background: rgba(180, 35, 24, 0.1);
+  color: var(--bad);
+}
+
 .metric-card dl,
 .quarter-list {
   display: grid;
@@ -365,6 +384,46 @@ body {
 
 .source-list a {
   color: var(--brand);
+}
+
+.news-list {
+  display: grid;
+  gap: 12px;
+}
+
+.news-card {
+  display: grid;
+  gap: 8px;
+  padding: 16px;
+  border-radius: 18px;
+  background: var(--panel-strong);
+  border: 1px solid var(--line);
+}
+
+.news-card a {
+  color: var(--brand);
+  font-weight: 800;
+  line-height: 1.45;
+  text-decoration: none;
+}
+
+.news-card a:hover,
+.news-card a:focus-visible {
+  text-decoration: underline;
+}
+
+.news-card p {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.6;
+}
+
+.news-meta {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  color: var(--muted);
+  font-size: 0.86rem;
 }
 
 .empty-state {

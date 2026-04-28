@@ -3,6 +3,7 @@ import { round, toNumber } from "./metrics.js";
 
 const HALF_DAY = 12 * 60 * 60 * 1000;
 const QUOTE_TTL = 5 * 60 * 1000;
+const NEWS_TTL = 30 * 60 * 1000;
 const FMP_BASE_URL = "https://financialmodelingprep.com/stable";
 const YAHOO_FINANCE_QUOTE_URL = "https://finance.yahoo.com/quote";
 const STOCKANALYSIS_ETF_URL = "https://stockanalysis.com/etf";
@@ -1029,7 +1030,70 @@ function summarizeSourceError(error) {
   return message;
 }
 
+function sortAscendingByDate(items) {
+  return [...items].sort((a, b) => String(a.date || "").localeCompare(String(b.date || "")));
+}
+
+function buildDailyPriceChart(priceHistory, limit = 60) {
+  const rows = sortAscendingByDate(priceHistory)
+    .map((row) => ({
+      date: row.date,
+      close: round(toNumber(row.close) ?? toNumber(row.adjClose) ?? toNumber(row.price)),
+      volume: toNumber(row.volume),
+    }))
+    .filter((row) => row.date && row.close != null)
+    .slice(-limit);
+
+  return rows.map((row, index) => {
+    const previous = rows[index - 1]?.close ?? null;
+    return {
+      ...row,
+      changePercent: previous ? round(((row.close / previous) - 1) * 100) : null,
+    };
+  });
+}
+
+function normalizeNewsRow(row) {
+  if (!row || typeof row !== "object") return null;
+  const title = String(row.title || row.headline || "").trim();
+  const url = String(row.url || row.link || "").trim();
+  if (!title || !url) return null;
+
+  return {
+    title,
+    url,
+    site: String(row.site || row.publisher || row.source || "").trim(),
+    publishedAt: String(row.publishedDate || row.date || row.datetime || "").trim(),
+    summary: String(row.text || row.summary || row.snippet || "").replace(/\s+/g, " ").trim().slice(0, 220),
+  };
+}
+
+async function fetchFmpNews(code, env) {
+  if (!env.FMP_API_KEY) return [];
+
+  const candidates = [
+    ["/news/stock-latest", { symbols: code, limit: "5" }],
+    ["/stock-news", { tickers: code, limit: "5" }],
+  ];
+
+  for (const [path, params] of candidates) {
+    try {
+      const rows = await fmpFetch(path, params, env, NEWS_TTL);
+      const news = (Array.isArray(rows) ? rows : []).map(normalizeNewsRow).filter(Boolean).slice(0, 5);
+      if (news.length) return news;
+    } catch {
+      // FMP plan coverage differs between news endpoints.
+    }
+  }
+
+  return [];
+}
+
 export async function getUSEtfData(code, env, selectedName = "") {
+  const today = new Date();
+  const from = new Date(today);
+  from.setUTCMonth(from.getUTCMonth() - 4);
+
   let direxionData = null;
   let direxionError = null;
   try {
@@ -1068,12 +1132,23 @@ export async function getUSEtfData(code, env, selectedName = "") {
     yahooError = error;
   }
 
-  const [quoteResult, profileResult, infoResult, holdingsResult, sectorResult] = await Promise.allSettled([
+  const [quoteResult, profileResult, infoResult, holdingsResult, sectorResult, priceResult, newsResult] = await Promise.allSettled([
     fmpFetch("/quote", { symbol: code }, env, QUOTE_TTL),
     fmpFetch("/profile", { symbol: code }, env),
     fmpFetch("/etf/info", { symbol: code }, env),
     fmpFetch("/etf/holdings", { symbol: code }, env),
     fmpFetch("/etf/sector-weightings", { symbol: code }, env),
+    fmpFetch(
+      "/historical-price-eod/full",
+      {
+        symbol: code,
+        serietype: "line",
+        from: from.toISOString().slice(0, 10),
+        to: today.toISOString().slice(0, 10),
+      },
+      env,
+    ),
+    fetchFmpNews(code, env),
   ]);
 
   const quoteData = quoteResult.status === "fulfilled" ? quoteResult.value : [];
@@ -1081,12 +1156,15 @@ export async function getUSEtfData(code, env, selectedName = "") {
   const infoData = infoResult.status === "fulfilled" ? infoResult.value : [];
   const holdingsData = holdingsResult.status === "fulfilled" ? holdingsResult.value : [];
   const sectorData = sectorResult.status === "fulfilled" ? sectorResult.value : [];
+  const priceData = priceResult.status === "fulfilled" ? priceResult.value : [];
+  const news = newsResult.status === "fulfilled" ? newsResult.value : [];
   const fmpInfoError = infoResult.status === "rejected" ? infoResult.reason : null;
   const fmpHoldingsError = holdingsResult.status === "rejected" ? holdingsResult.reason : null;
   const fmpSectorsError = sectorResult.status === "rejected" ? sectorResult.reason : null;
 
   const quote = Array.isArray(quoteData) ? quoteData[0] ?? {} : quoteData ?? {};
   const profile = Array.isArray(profileData) ? profileData[0] ?? {} : profileData ?? {};
+  const priceHistory = Array.isArray(priceData) ? priceData : Array.isArray(priceData?.historical) ? priceData.historical : [];
   const fmpInfo = normalizeFmpInfoRow(Array.isArray(infoData) ? infoData[0] ?? {} : infoData ?? {});
   const direxionInfo = direxionData?.info ?? {};
   const alphaInfo = alphaVantageData?.info ?? {};
@@ -1209,6 +1287,8 @@ export async function getUSEtfData(code, env, selectedName = "") {
       sectorWeights,
     },
     history: [],
+    priceChart: buildDailyPriceChart(priceHistory),
+    news,
     summaryNote: "ETF는 개별 기업 재무제표보다 펀드 구조가 더 중요합니다. 운용보수, 배당수익률, 순자산 규모, 상위 보유 종목, 섹터 비중을 함께 읽는 것이 핵심입니다.",
     notes: [
       "레버리지 ETF는 복리 효과와 변동성 드래그 때문에 장기 보유 시 기초지수 단순 배수와 다른 성과가 나올 수 있습니다.",

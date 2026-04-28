@@ -14,6 +14,8 @@ const ui = {
   selectionSummary: document.querySelector("#selection-summary"),
   fxBanner: document.querySelector("#fxBanner"),
   insightSummary: document.querySelector("#insightSummary"),
+  priceChart: document.querySelector("#priceChart"),
+  newsList: document.querySelector("#newsList"),
   metricGrid: document.querySelector("#metricGrid"),
   quarterlyTrend: document.querySelector("#quarterlyTrend"),
   notesList: document.querySelector(".notes-list"),
@@ -118,6 +120,93 @@ function formatUsd(value) {
     currency: "USD",
     maximumFractionDigits: value >= 100 ? 0 : 2,
   }).format(value);
+}
+
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function formatPercent(value) {
+  if (value == null || Number.isNaN(value)) return "-";
+  const sign = value > 0 ? "+" : "";
+  return `${sign}${value.toFixed(2)}%`;
+}
+
+function summarizePriceAction(priceChart = []) {
+  const points = priceChart.filter((point) => point.close != null);
+  if (points.length < 2) {
+    return {
+      tone: "warn",
+      title: "가격 데이터 부족",
+      body: "최근 일일 가격 흐름을 계산할 데이터가 충분하지 않습니다.",
+    };
+  }
+
+  const first = points[0];
+  const last = points[points.length - 1];
+  const high = points.reduce((best, point) => (point.close > best.close ? point : best), first);
+  const low = points.reduce((best, point) => (point.close < best.close ? point : best), first);
+  const periodReturn = ((last.close / first.close) - 1) * 100;
+  const range = ((high.close / low.close) - 1) * 100;
+  const tone = periodReturn >= 5 ? "good" : periodReturn <= -5 ? "bad" : "warn";
+  const title = periodReturn >= 5 ? "단기 상승 우위" : periodReturn <= -5 ? "단기 조정 구간" : "박스권 또는 혼조 흐름";
+
+  return {
+    tone,
+    title,
+    body: `최근 ${points.length}거래일 수익률은 ${formatPercent(periodReturn)}입니다. 고점은 ${high.date} ${formatUsd(high.close)}, 저점은 ${low.date} ${formatUsd(low.close)}이며, 관찰 구간 변동폭은 약 ${formatPercent(range)}입니다.`,
+  };
+}
+
+function buildDetailedOutlook(stock, history = [], priceChart = []) {
+  if (isEtf(stock)) {
+    const details = Array.isArray(stock.etfDetails) ? stock.etfDetails : [];
+    const holdings = Array.isArray(stock.holdings) ? stock.holdings : [];
+    const sectors = Array.isArray(stock.sectorWeights) ? stock.sectorWeights : [];
+    const price = summarizePriceAction(priceChart);
+    const expense = details.find((item) => item.key === "expenseRatio")?.value ?? "-";
+    const dividend = details.find((item) => item.key === "dividendYield")?.value ?? "-";
+    const topHolding = holdings[0] ? `${holdings[0].name}${holdings[0].weight != null ? ` ${holdings[0].weight.toFixed(2)}%` : ""}` : "상위 보유 종목 미확인";
+    const topSector = sectors[0] ? `${sectors[0].name}${sectors[0].weight != null ? ` ${sectors[0].weight.toFixed(2)}%` : ""}` : "섹터 비중 미확인";
+
+    return {
+      tone: price.tone,
+      title: price.title,
+      bullets: [
+        `ETF 구조는 운용보수 ${expense}, 배당수익률 ${dividend}를 먼저 확인해야 합니다.`,
+        `집중도는 상위 보유 종목 ${topHolding}, 대표 섹터 ${topSector}를 기준으로 점검할 수 있습니다.`,
+        price.body,
+        "전망은 기초지수 방향성, 금리와 유동성, 레버리지 여부, 보유 종목 집중도 변화에 크게 좌우됩니다.",
+      ],
+    };
+  }
+
+  const metrics = stock.metrics ?? {};
+  const price = summarizePriceAction(priceChart);
+  const marginTrend = summarizeTrend("operatingMargin", history);
+  const roeTrend = summarizeTrend("roe", history);
+  const debtTrend = summarizeTrend("debtRatio", history);
+  const valuation =
+    metrics.per != null && metrics.pbr != null
+      ? `PER ${formatMetric(metrics.per, "x")}, PBR ${formatMetric(metrics.pbr, "x")} 기준으로 밸류에이션 부담을 확인해야 합니다.`
+      : "PER 또는 PBR 데이터가 비어 있어 밸류에이션 판단은 보수적으로 봐야 합니다.";
+
+  return {
+    tone: price.tone,
+    title: price.title,
+    bullets: [
+      valuation,
+      `수익성은 ROE ${formatMetric(metrics.roe, "%")}, 영업이익률 ${formatMetric(metrics.operatingMargin, "%")} 수준이며, ROE 흐름은 "${roeTrend.sentence}"`,
+      `재무 안정성은 부채비율 ${formatMetric(metrics.debtRatio, "%")} 기준으로 보며, 최근 흐름은 "${debtTrend.sentence}"`,
+      `마진 추세는 "${marginTrend.sentence}" ${price.body}`,
+      "전망은 다음 실적 발표에서 매출 성장률, 마진 유지력, 가이던스 변화가 현재 밸류에이션을 정당화하는지에 달려 있습니다.",
+    ],
+  };
 }
 
 function buildEtfDisplayValue(item) {
@@ -255,13 +344,21 @@ function renderEtfBreakdownLocalized(stock) {
   `;
 }
 
-function renderEtfInsightSummary(stock, summaryNote, sources) {
+function renderEtfInsightSummary(stock, summaryNote, sources, priceChart = []) {
+  const detailed = buildDetailedOutlook(stock, [], priceChart);
   ui.insightSummary.classList.remove("empty-state");
   ui.insightSummary.innerHTML = `
     <article class="summary-card">
       <p class="section-kicker">ETF 요약</p>
       <h3>${stock.name} ETF 요약</h3>
       <p>${summaryNote}</p>
+    </article>
+    <article class="summary-card outlook-card ${detailed.tone}">
+      <p class="section-kicker">Outlook</p>
+      <h3>${detailed.title}</h3>
+      <ul class="detail-list">
+        ${detailed.bullets.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}
+      </ul>
     </article>
     <article class="summary-card">
       <p class="section-kicker">출처</p>
@@ -406,13 +503,14 @@ function renderSelection(stock) {
   `;
 }
 
-function renderInsightSummary(stock, history, summaryNote, sources) {
+function renderInsightSummary(stock, history, summaryNote, sources, priceChart = []) {
   if (isEtf(stock)) {
-    renderEtfInsightSummary(stock, summaryNote, sources);
+    renderEtfInsightSummary(stock, summaryNote, sources, priceChart);
     return;
   }
 
   const outlook = buildOutlook(history);
+  const detailed = buildDetailedOutlook(stock, history, priceChart);
   const coreMetrics = [
     `PER ${formatMetric(stock.metrics.per, "x")}`,
     `PBR ${formatMetric(stock.metrics.pbr, "x")}`,
@@ -431,6 +529,13 @@ function renderInsightSummary(stock, history, summaryNote, sources) {
       <p class="section-kicker">Outlook</p>
       <h3>${outlook.title}</h3>
       <p>${outlook.body}</p>
+    </article>
+    <article class="summary-card outlook-card ${detailed.tone}">
+      <p class="section-kicker">Detailed View</p>
+      <h3>${detailed.title}</h3>
+      <ul class="detail-list">
+        ${detailed.bullets.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}
+      </ul>
     </article>
     <article class="summary-card">
       <p class="section-kicker">Source</p>
@@ -541,6 +646,73 @@ function renderQuarterlyTrend(history, metricDefinitions) {
         </article>
       `;
     })
+    .join("");
+}
+
+function renderPriceChart(priceChart = [], stock = null) {
+  const points = priceChart.filter((point) => point.close != null);
+  if (!points.length) {
+    ui.priceChart.classList.add("empty-state");
+    ui.priceChart.textContent = "최근 일일 가격 데이터를 받지 못했습니다.";
+    return;
+  }
+
+  const values = points.map((point) => point.close);
+  const minValue = Math.min(...values);
+  const maxValue = Math.max(...values);
+  const width = 720;
+  const height = 300;
+  const padding = 28;
+  const path = buildChartPath(points, "close", width, height, padding, minValue, maxValue);
+  const start = points[0];
+  const end = points[points.length - 1];
+  const totalReturn = start.close ? ((end.close / start.close) - 1) * 100 : null;
+  const latestChange = end.changePercent;
+  const tone = totalReturn >= 0 ? "good" : "bad";
+
+  ui.priceChart.classList.remove("empty-state");
+  ui.priceChart.innerHTML = `
+    <div class="chart-wrap">
+      <div class="chart-meta">
+        <span>${stock ? `${stock.name} (${stock.code})` : "선택 종목"} · ${points.length}거래일</span>
+        <span>${start.date} ~ ${end.date}</span>
+      </div>
+      <svg class="chart-svg" viewBox="0 0 ${width} ${height}" role="img" aria-label="최근 일일 종가 차트">
+        <line x1="${padding}" y1="${height - padding}" x2="${width - padding}" y2="${height - padding}" stroke="rgba(20,32,51,0.18)" stroke-width="1" />
+        <line x1="${padding}" y1="${padding}" x2="${padding}" y2="${height - padding}" stroke="rgba(20,32,51,0.18)" stroke-width="1" />
+        <path d="${path}" fill="none" stroke="#0d2a45" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" />
+      </svg>
+      <div class="chart-legend">
+        <span class="legend-item"><span class="legend-swatch stock"></span>종가 ${formatUsd(end.close)}</span>
+        <span class="metric-tag ${tone === "good" ? "tag-good" : "tag-bad"}">기간 수익률 ${formatPercent(totalReturn)}</span>
+        <span class="metric-tag tag-muted">최근 일간 ${formatPercent(latestChange)}</span>
+      </div>
+    </div>
+  `;
+}
+
+function renderNews(news = []) {
+  const items = Array.isArray(news) ? news : [];
+  if (!items.length) {
+    ui.newsList.classList.add("empty-state");
+    ui.newsList.textContent = "관련 뉴스를 받지 못했습니다. FMP 뉴스 엔드포인트 권한 또는 호출 제한을 확인하세요.";
+    return;
+  }
+
+  ui.newsList.classList.remove("empty-state");
+  ui.newsList.innerHTML = items
+    .map(
+      (item) => `
+        <article class="news-card">
+          <a href="${escapeHtml(item.url)}" target="_blank" rel="noreferrer">${escapeHtml(item.title)}</a>
+          <div class="news-meta">
+            <span>${escapeHtml(item.site || "뉴스")}</span>
+            <span>${escapeHtml(item.publishedAt || "날짜 없음")}</span>
+          </div>
+          ${item.summary ? `<p>${escapeHtml(item.summary)}</p>` : ""}
+        </article>
+      `,
+    )
     .join("");
 }
 
@@ -699,6 +871,10 @@ function renderError(message) {
   renderFxBanner();
   ui.insightSummary.classList.remove("empty-state");
   ui.insightSummary.innerHTML = `<div class="error-card">${message}</div>`;
+  ui.priceChart.classList.add("empty-state");
+  ui.priceChart.textContent = "최근 일일 가격 차트를 불러오지 못했습니다.";
+  ui.newsList.classList.add("empty-state");
+  ui.newsList.textContent = "관련 뉴스를 불러오지 못했습니다.";
   ui.metricGrid.innerHTML = "";
   ui.quarterlyTrend.innerHTML = "";
   renderBacktestTarget(null);
@@ -865,7 +1041,7 @@ async function loadSearchResults(query) {
 function renderIdleSearchState() {
   ui.searchResults.innerHTML = `
     <div class="search-result">
-      미국 주식 종목명 또는 티커를 입력하면 검색을 시작합니다.
+      미국 주식·ETF 이름 또는 티커를 입력하면 검색을 시작합니다.
       <small>입력 중에는 로컬 마스터 목록에서 바로 필터링합니다.</small>
     </div>
   `;
@@ -884,7 +1060,11 @@ function resetSearchSelection() {
   ui.selectionSummary.innerHTML = "";
   renderFxBanner();
   ui.insightSummary.classList.add("empty-state");
-  ui.insightSummary.textContent = "종목을 선택하면 현재 평가와 전망이 표시됩니다.";
+  ui.insightSummary.textContent = "종목이나 ETF를 선택하면 주요 분석과 전망이 표시됩니다.";
+  ui.priceChart.classList.add("empty-state");
+  ui.priceChart.textContent = "종목이나 ETF를 선택하면 최근 일일 가격 차트가 표시됩니다.";
+  ui.newsList.classList.add("empty-state");
+  ui.newsList.textContent = "종목이나 ETF를 선택하면 관련 뉴스가 표시됩니다.";
   ui.metricGrid.innerHTML = "";
   ui.quarterlyTrend.innerHTML = "";
   renderBacktestTarget(null);
@@ -907,7 +1087,9 @@ async function loadStock(code, name = "", assetType = "") {
     state.stockData = data;
     renderSelection(data.stock);
     renderFxBanner();
-    renderInsightSummary(data.stock, data.history, data.summaryNote, data.sources);
+    renderInsightSummary(data.stock, data.history, data.summaryNote, data.sources, data.priceChart);
+    renderPriceChart(data.priceChart, data.stock);
+    renderNews(data.news);
     renderMetrics(data.stock, data.history);
     renderQuarterlyTrend(data.history, data.stock.metricDefinitions);
     renderNotes(data.notes);
