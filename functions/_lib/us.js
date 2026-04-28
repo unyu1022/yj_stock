@@ -272,9 +272,12 @@ async function loadUSEtfList(env) {
 }
 
 export async function searchUSStocks(query, env) {
-  const list = await loadUSTickers(env);
-  const etfList = await loadUSEtfList(env);
+  const [tickerResult, etfResult] = await Promise.allSettled([loadUSTickers(env), loadUSEtfList(env)]);
+  const list = tickerResult.status === "fulfilled" ? tickerResult.value : [];
+  const etfList = etfResult.status === "fulfilled" ? etfResult.value : [];
   const normalized = query.trim().toLowerCase();
+  const directSymbol = query.trim().toUpperCase();
+  const canDirectLookup = /^[A-Z][A-Z0-9.-]{0,9}$/.test(directSymbol);
   const localStocks = (!normalized
     ? list.slice(0, 20)
     : list.filter(
@@ -307,14 +310,13 @@ export async function searchUSStocks(query, env) {
 
   const localMatches = mergeSearchItems([...localEtfs, ...localStocks]);
 
-  if (!normalized || !env.FMP_API_KEY) {
-    return localMatches.slice(0, 20);
-  }
-
-  const remoteResponses = await Promise.allSettled([
-    fmpFetch("/search-symbol", { query: query.trim() }, env),
-    fmpFetch("/search-name", { query: query.trim() }, env),
-  ]);
+  const remoteResponses =
+    normalized && env.FMP_API_KEY
+      ? await Promise.allSettled([
+          fmpFetch("/search-symbol", { query: query.trim() }, env),
+          fmpFetch("/search-name", { query: query.trim() }, env),
+        ])
+      : [];
 
   const remoteMatches = remoteResponses
     .filter((result) => result.status === "fulfilled")
@@ -322,7 +324,21 @@ export async function searchUSStocks(query, env) {
     .map(mapSearchRow)
     .filter(Boolean);
 
-  return mergeSearchItems([...localMatches, ...remoteMatches]).slice(0, 20);
+  const directMatch =
+    canDirectLookup && ![...localMatches, ...remoteMatches].some((item) => item.code === directSymbol)
+      ? [
+          {
+            code: directSymbol,
+            name: directSymbol,
+            market: "US",
+            marketLabel: "미국 주식",
+            exchange: "",
+            assetType: "Stock",
+          },
+        ]
+      : [];
+
+  return mergeSearchItems([...localMatches, ...remoteMatches, ...directMatch]).slice(0, 20);
 }
 
 async function fmpFetch(path, params, env, ttl = HALF_DAY) {
@@ -664,7 +680,7 @@ async function getUSEtfData(code, env, stockMeta = null) {
 }
 
 export async function getUSStockData(code, env, selectedName = "") {
-  const tickers = await loadUSTickers(env);
+  const tickers = await loadUSTickers(env).catch(() => []);
   const etfList = await loadUSEtfList(env).catch(() => []);
   const stockMeta = tickers.find((item) => item.code === code);
   const etfMeta = etfList.find((item) => item.code === code);

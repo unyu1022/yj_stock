@@ -834,7 +834,15 @@ function filterMasterData(items, query) {
 }
 
 async function loadSearchResults(query) {
-  const master = await ensureMasterData();
+  let master = [];
+  let masterError = null;
+
+  try {
+    master = await ensureMasterData();
+  } catch (error) {
+    masterError = error;
+  }
+
   const localMatches = filterMasterData(master, query);
 
   try {
@@ -847,6 +855,9 @@ async function loadSearchResults(query) {
     });
     renderSearchResults([...merged.values()].slice(0, 20), query);
   } catch (error) {
+    if (masterError && !localMatches.length) {
+      throw error;
+    }
     renderSearchResults(localMatches, query);
   }
 }
