@@ -1,5 +1,6 @@
 import { badRequest, json, serverError } from "../_lib/http.js";
 import { getUsdKrwRate } from "../_lib/fx.js";
+import { fillMarketFallbacks } from "../_lib/market-fallback.js";
 import {
   buildUSStockFallbackPayload,
   fetchUSStockMetricFallback,
@@ -56,6 +57,8 @@ export async function onRequestGet(context) {
         }
       }
     }
+
+    payload = await fillMarketFallbacks(payload, code, context.env);
 
     const fx = await getUsdKrwRate().catch(() => null);
     return json({ ok: true, ...payload, fx });
