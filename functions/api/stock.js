@@ -1,6 +1,5 @@
 import { badRequest, json, serverError } from "../_lib/http.js";
 import { getUsdKrwRate } from "../_lib/fx.js";
-import { getKRStockData } from "../_lib/kr.js";
 import { fetchUSStockMetricFallback, mergeUSStockMetricFallback } from "../_lib/us-stock-fallback.js";
 import { getUSEtfData } from "../_lib/us-etf.js";
 import { getUSStockData } from "../_lib/us.js";
@@ -10,12 +9,11 @@ export async function onRequestGet(context) {
     const url = new URL(context.request.url);
     const market = (url.searchParams.get("market") || "").toUpperCase();
     const code = (url.searchParams.get("code") || "").trim().toUpperCase();
-    const corpCode = (url.searchParams.get("corpCode") || "").trim();
     const name = (url.searchParams.get("name") || "").trim();
     const assetType = (url.searchParams.get("assetType") || "").trim().toUpperCase();
 
-    if (!market || !["KR", "US"].includes(market)) {
-      return badRequest("market 파라미터는 KR 또는 US 여야 합니다.");
+    if (market && market !== "US") {
+      return badRequest("현재는 미국 주식과 ETF만 조회할 수 있습니다.");
     }
 
     if (!code) {
@@ -23,13 +21,11 @@ export async function onRequestGet(context) {
     }
 
     let payload =
-      market === "KR"
-        ? await getKRStockData(code, context.env, corpCode, name)
-        : assetType === "ETF"
-          ? await getUSEtfData(code, context.env, name)
-          : await getUSStockData(code, context.env, name);
+      assetType === "ETF"
+        ? await getUSEtfData(code, context.env, name)
+        : await getUSStockData(code, context.env, name);
 
-    if (market === "US" && payload?.stock?.assetType !== "ETF") {
+    if (payload?.stock?.assetType !== "ETF") {
       const metrics = payload?.stock?.metrics ?? {};
       const needsFallback =
         [metrics.roe, metrics.roic, metrics.operatingMargin, metrics.dividendYield].some((value) => value == null) ||
@@ -46,7 +42,7 @@ export async function onRequestGet(context) {
       }
     }
 
-    const fx = market === "US" ? await getUsdKrwRate().catch(() => null) : null;
+    const fx = await getUsdKrwRate().catch(() => null);
     return json({ ok: true, ...payload, fx });
   } catch (error) {
     return serverError(error.message);

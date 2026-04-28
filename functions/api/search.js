@@ -1,5 +1,4 @@
 import { badRequest, json, serverError } from "../_lib/http.js";
-import { searchKRStocks } from "../_lib/kr.js";
 import { searchUSStocks } from "../_lib/us.js";
 
 export async function onRequestGet(context) {
@@ -8,11 +7,11 @@ export async function onRequestGet(context) {
     const market = (url.searchParams.get("market") || "").toUpperCase();
     const query = url.searchParams.get("q") || "";
 
-    if (!market || !["KR", "US"].includes(market)) {
-      return badRequest("market 파라미터는 KR 또는 US 여야 합니다.");
+    if (market && market !== "US") {
+      return badRequest("현재는 미국 주식과 ETF만 검색할 수 있습니다.");
     }
 
-    const items = market === "KR" ? await searchKRStocks(query, context.env) : await searchUSStocks(query, context.env);
+    const items = await searchUSStocks(query, context.env);
     return json({ ok: true, items });
   } catch (error) {
     return serverError(error.message);
