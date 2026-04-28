@@ -1,4 +1,5 @@
 import { remember } from "./cache.js";
+import { filterInvestorCatalystNews } from "./news-filter.js";
 import { round, toNumber } from "./metrics.js";
 
 const YAHOO_CHART_URL = "https://query1.finance.yahoo.com/v8/finance/chart";
@@ -97,7 +98,7 @@ export async function fetchYahooNews(code, env, limit = 5) {
     const xml = await response.text();
     if (!response.ok || !xml) return [];
 
-    return [...xml.matchAll(/<item\b[^>]*>([\s\S]*?)<\/item>/gi)]
+    const news = [...xml.matchAll(/<item\b[^>]*>([\s\S]*?)<\/item>/gi)]
       .map((match) => {
         const block = match[1];
         const title = getTagValue(block, "title");
@@ -112,8 +113,9 @@ export async function fetchYahooNews(code, env, limit = 5) {
           summary: getTagValue(block, "description").slice(0, 220),
         };
       })
-      .filter(Boolean)
-      .slice(0, limit);
+      .filter(Boolean);
+
+    return filterInvestorCatalystNews(news, limit);
   });
 }
 

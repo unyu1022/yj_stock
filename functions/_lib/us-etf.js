@@ -1,4 +1,5 @@
 import { remember } from "./cache.js";
+import { filterInvestorCatalystNews } from "./news-filter.js";
 import { round, toNumber } from "./metrics.js";
 
 const HALF_DAY = 12 * 60 * 60 * 1000;
@@ -1079,7 +1080,7 @@ async function fetchFmpNews(code, env) {
   for (const [path, params] of candidates) {
     try {
       const rows = await fmpFetch(path, params, env, NEWS_TTL);
-      const news = (Array.isArray(rows) ? rows : []).map(normalizeNewsRow).filter(Boolean).slice(0, 5);
+      const news = filterInvestorCatalystNews((Array.isArray(rows) ? rows : []).map(normalizeNewsRow).filter(Boolean), 5);
       if (news.length) return news;
     } catch {
       // FMP plan coverage differs between news endpoints.
