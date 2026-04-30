@@ -10,5 +10,6 @@ telegram-bridge.env
 .telegram-bridge-state.json
 .telegram-bridge.lock
 .telegram-codex-last-message.txt
+telegram-bridge.log
 .last_retry_push_dir
 codex-git-write-test/

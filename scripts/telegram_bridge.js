@@ -6,8 +6,17 @@ const rootDir = path.resolve(__dirname, "..");
 const envPath = path.join(rootDir, "telegram-bridge.env");
 const statePath = path.join(rootDir, ".telegram-bridge-state.json");
 const lockPath = path.join(rootDir, ".telegram-bridge.lock");
+const logPath = path.join(rootDir, "telegram-bridge.log");
 const maxTelegramMessageLength = 3500;
 let activeRun = false;
+
+function log(message) {
+  const line = `${new Date().toISOString()} ${message}`;
+  console.log(line);
+  try {
+    fs.appendFileSync(logPath, `${line}\n`, "utf8");
+  } catch {}
+}
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -104,8 +113,8 @@ async function telegramGet(token, method, params) {
 async function telegramPost(token, method, payload) {
   const response = await fetch(`https://api.telegram.org/bot${token}/${method}`, {
     method: "POST",
-    headers: { "content-type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams(Object.entries(payload).map(([key, value]) => [key, String(value)])),
+    headers: { "content-type": "application/json; charset=utf-8" },
+    body: JSON.stringify(payload),
   });
   return response.json();
 }
@@ -116,6 +125,7 @@ async function sendMessage(token, chatId, text) {
     message = `${message.slice(0, maxTelegramMessageLength - 120)}\n\n[truncated]`;
   }
   await telegramPost(token, "sendMessage", { chat_id: chatId, text: message });
+  log(`sent message chat_id=${chatId} length=${message.length}`);
 }
 
 function buildHelpText() {
@@ -174,6 +184,7 @@ function buildCodexPrompt(payload, retry = false) {
     "분석 요청이면 분석 결과를, 수정 요청이면 수정 결과를 적으세요.",
     "Cloudflare 직접 배포는 시도하지 마세요. `wrangler deploy`, `deploy_cloudflare.cmd`, `npx wrangler deploy`를 실행하지 마세요.",
     "배포가 필요한 경우에도 Codex가 직접 commit/push 하지 마세요. 코드 수정까지만 수행하면 Telegram 브리지가 직접 GitHub origin/main 에 commit/push 합니다.",
+    "질문이나 의견 요청이면 파일을 수정하지 말고, 현재 코드 기준으로 분석과 제안만 답하세요.",
     "실제로 불가능한 경우에만 짧게 이유를 적으세요.",
     "",
     `작업:\n${payload}`,
@@ -193,6 +204,9 @@ function runProcess(command, args, options = {}) {
     input: options.input,
     encoding: "utf8",
     timeout: options.timeoutMs,
+    // Codex --json can emit a lot of event data. Node's default spawnSync
+    // buffer is small enough to kill the child and report status=null.
+    maxBuffer: 1024 * 1024 * 100,
     windowsHide: true,
   });
 }
@@ -243,7 +257,13 @@ function parseCodexResult(completed, outputFile) {
       finalMessage = line.trim();
     }
   }
-  return { finalMessage, eventCount, stderrText: (completed.stderr || "").trim() };
+  return {
+    finalMessage,
+    eventCount,
+    stderrText: (completed.stderr || "").trim(),
+    errorText: completed.error ? `${completed.error.name || "Error"}: ${completed.error.message || completed.error}` : "",
+    signalText: completed.signal ? String(completed.signal) : "",
+  };
 }
 
 function formatCodexSummary(payload, finalMessage, eventCount) {
@@ -362,6 +382,17 @@ async function runCodexTask(token, chatId, payload, config, rawOnly = false) {
     );
     const parsed = parseCodexResult(completed, outputFile);
     attempts.push({ completed, ...parsed });
+    log(
+      [
+        "codex completed",
+        `status=${completed.status}`,
+        `signal=${completed.signal || ""}`,
+        `error=${completed.error ? completed.error.message : ""}`,
+        `stdout=${completed.stdout ? completed.stdout.length : 0}`,
+        `stderr=${completed.stderr ? completed.stderr.length : 0}`,
+        `events=${parsed.eventCount}`,
+      ].join(" "),
+    );
 
     if (completed.status === 0 && !isAcknowledgementOnly(parsed.finalMessage)) {
       let responseText = rawOnly ? parsed.finalMessage.trim() : formatCodexSummary(payload, parsed.finalMessage, parsed.eventCount);
@@ -375,7 +406,10 @@ async function runCodexTask(token, chatId, payload, config, rawOnly = false) {
   }
 
   const last = attempts[attempts.length - 1];
-  const lines = ["Codex 실행 실패", `요청: ${payload}`, `exit code: ${last.completed.status}`];
+  const statusText = last.completed.status === null ? "null" : String(last.completed.status);
+  const lines = ["Codex 실행 실패", `요청: ${payload}`, `exit code: ${statusText}`];
+  if (last.signalText) lines.push(`signal: ${last.signalText}`);
+  if (last.errorText) lines.push(`error: ${last.errorText}`);
   if (last.finalMessage) lines.push("", last.finalMessage);
   if (last.stderrText) lines.push("", "stderr:", last.stderrText);
   await sendMessage(token, chatId, lines.join("\n"));
@@ -432,6 +466,7 @@ async function processUpdate(token, chatId, update, config) {
   const message = update.message;
   if (!message) return;
   if (String(message.chat?.id || "") !== chatId) return;
+  log(`received update_id=${update.update_id} text=${JSON.stringify(String(message.text || "").slice(0, 120))}`);
   await handleTextMessage(token, chatId, message.text || "", config);
 }
 
@@ -439,9 +474,10 @@ async function runLoop() {
   acquireLockOrExit();
   const config = getConfig();
   const state = loadState();
-  console.log(`Telegram bridge started. Allowed chat_id=${config.chatId}`);
-  console.log(`Env file: ${envPath}`);
-  console.log(`State file: ${statePath}`);
+  log(`Telegram bridge started. Allowed chat_id=${config.chatId}`);
+  log(`Env file: ${envPath}`);
+  log(`State file: ${statePath}`);
+  log(`Workspace: ${config.codexWorkspace}`);
 
   while (true) {
     try {
@@ -457,13 +493,13 @@ async function runLoop() {
         saveState(state);
       }
     } catch (error) {
-      console.error(`[telegram-bridge] ${error.name || "Error"}: ${error.message || error}`);
+      log(`[telegram-bridge] ${error.name || "Error"}: ${error.message || error}`);
       await sleep(5000);
     }
   }
 }
 
 runLoop().catch((error) => {
-  console.error(`[telegram-bridge] ${error.name || "Error"}: ${error.message || error}`);
+  log(`[telegram-bridge] ${error.name || "Error"}: ${error.message || error}`);
   process.exit(1);
 });
