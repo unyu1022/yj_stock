@@ -234,6 +234,14 @@ function executeCodexCommand(workspace, codexCommand, sandboxMode, prompt, outpu
     );
   }
 
+  if (/\.(cmd|bat)$/i.test(codexCommand)) {
+    return runProcess(
+      "cmd.exe",
+      ["/d", "/s", "/c", codexCommand, ...args],
+      { cwd: workspace, input: prompt, timeoutMs: timeoutSeconds * 1000 },
+    );
+  }
+
   return runProcess(codexCommand, args, { cwd: workspace, input: prompt, timeoutMs: timeoutSeconds * 1000 });
 }
 
