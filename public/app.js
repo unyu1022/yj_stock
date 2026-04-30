@@ -30,11 +30,9 @@ const ui = {
   backtestChart: document.querySelector("#backtestChart"),
   backtestNotes: document.querySelector("#backtestNotes"),
   labTarget: document.querySelector("#labTarget"),
-  labMonthlyAmount: document.querySelector("#lab-monthly-amount"),
   labYears: document.querySelector("#lab-years"),
   labMonths: document.querySelector("#lab-months"),
   labFearStrategy: document.querySelector("#lab-fear-strategy"),
-  runLabDca: document.querySelector("#run-lab-dca"),
   runLabFear: document.querySelector("#run-lab-fear"),
   labSummary: document.querySelector("#labSummary"),
   labChart: document.querySelector("#labChart"),
@@ -818,7 +816,7 @@ function renderLabTarget(stock) {
     return;
   }
 
-  ui.labTarget.textContent = `${stock.name} (${stock.code})에 매월 같은 금액을 투자했을 때 원금, 평가금액, 누적 수익률을 NASDAQ Composite 적립식 투자와 비교합니다.`;
+  ui.labTarget.textContent = `${stock.name} (${stock.code})에 공포매매 변형을 적용해 NASDAQ Composite와 성과를 비교합니다.`;
 }
 
 function renderBacktestIdleState() {
@@ -831,9 +829,9 @@ function renderBacktestIdleState() {
 
 function renderLabIdleState() {
   ui.labSummary.classList.add("empty-state");
-  ui.labSummary.textContent = "종목과 투자 기간, 월 투자금을 선택한 뒤 실행하면 원금과 누적 수익률을 NASDAQ 지수 투자와 비교합니다.";
+  ui.labSummary.textContent = "종목과 검증 기간, 공포매매 변형을 선택한 뒤 실행하면 NASDAQ 지수와 성과를 비교합니다.";
   ui.labChart.classList.add("empty-state");
-  ui.labChart.textContent = "원금, 선택 종목, NASDAQ 적립식 투자 평가금액 차트가 여기에 생성됩니다.";
+  ui.labChart.textContent = "공포매매 전략과 NASDAQ 성과 비교 차트가 여기에 생성됩니다.";
   ui.labNotes.innerHTML = "";
 }
 
@@ -842,13 +840,6 @@ function renderBacktestLoading() {
   ui.backtestSummary.innerHTML = `<div class="loading-card">백테스트를 계산하고 있습니다...</div>`;
   ui.backtestChart.classList.remove("empty-state");
   ui.backtestChart.innerHTML = `<div class="loading-card">가격 데이터와 NASDAQ 비교 차트를 준비하고 있습니다...</div>`;
-}
-
-function renderLabLoading() {
-  ui.labSummary.classList.remove("empty-state");
-  ui.labSummary.innerHTML = `<div class="loading-card">적립식 투자 결과를 계산하고 있습니다...</div>`;
-  ui.labChart.classList.remove("empty-state");
-  ui.labChart.innerHTML = `<div class="loading-card">원금과 NASDAQ 비교 차트를 준비하고 있습니다...</div>`;
 }
 
 function renderLabFearLoading() {
@@ -909,49 +900,6 @@ function renderBacktestChart(data) {
   `;
 }
 
-function renderLabChart(data) {
-  const points = data.chartSeries ?? [];
-  if (!points.length) {
-    ui.labChart.classList.add("empty-state");
-    ui.labChart.textContent = "차트를 만들 데이터가 부족합니다.";
-    return;
-  }
-
-  const values = points.flatMap((point) => [point.principal, point.stockValue, point.benchmarkValue]);
-  const minValue = Math.min(...values);
-  const maxValue = Math.max(...values);
-  const width = 720;
-  const height = 320;
-  const padding = 28;
-  const principalPath = buildChartPath(points, "principal", width, height, padding, minValue, maxValue);
-  const stockPath = buildChartPath(points, "stockValue", width, height, padding, minValue, maxValue);
-  const benchmarkPath = buildChartPath(points, "benchmarkValue", width, height, padding, minValue, maxValue);
-  const start = points[0]?.date;
-  const end = points[points.length - 1]?.date;
-
-  ui.labChart.classList.remove("empty-state");
-  ui.labChart.innerHTML = `
-    <div class="chart-wrap">
-      <div class="chart-meta">
-        <span>월 ${formatUsd(data.monthlyAmount)} 적립 기준 평가금액 비교</span>
-        <span>${start} ~ ${end}</span>
-      </div>
-      <svg class="chart-svg" viewBox="0 0 ${width} ${height}" role="img" aria-label="적립식 투자 비교 차트">
-        <line x1="${padding}" y1="${height - padding}" x2="${width - padding}" y2="${height - padding}" stroke="rgba(20,32,51,0.18)" stroke-width="1" />
-        <line x1="${padding}" y1="${padding}" x2="${padding}" y2="${height - padding}" stroke="rgba(20,32,51,0.18)" stroke-width="1" />
-        <path d="${principalPath}" fill="none" stroke="#586377" stroke-width="2.5" stroke-dasharray="7 7" stroke-linecap="round" stroke-linejoin="round" />
-        <path d="${benchmarkPath}" fill="none" stroke="#b96d2b" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" />
-        <path d="${stockPath}" fill="none" stroke="#0d2a45" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" />
-      </svg>
-      <div class="chart-legend">
-        <span class="legend-item"><span class="legend-swatch principal"></span>투입 원금</span>
-        <span class="legend-item"><span class="legend-swatch stock"></span>${data.stock.code} 평가금액</span>
-        <span class="legend-item"><span class="legend-swatch benchmark"></span>NASDAQ 평가금액</span>
-      </div>
-    </div>
-  `;
-}
-
 function renderBacktestSummary(data) {
   if (Array.isArray(data.strategies) && data.strategies.length) {
     ui.backtestSummary.classList.remove("empty-state");
@@ -1004,42 +952,6 @@ function renderBacktestSummary(data) {
   `;
 
   ui.backtestNotes.innerHTML = (data.notes ?? []).map((note) => `<li>${note}</li>`).join("");
-}
-
-function renderLabSummary(data) {
-  const stock = data.result.stock;
-  const benchmark = data.result.benchmark;
-  const stockBetter = data.result.excessReturn >= 0;
-
-  ui.labSummary.classList.remove("empty-state");
-  ui.labSummary.innerHTML = `
-    <article class="summary-card">
-      <p class="section-kicker">Input</p>
-      <h3>매월 ${formatUsd(data.monthlyAmount)} 투자</h3>
-      <p>${data.period.startDate}부터 ${data.period.endDate}까지 ${stock.contributionCount}회 매수한 가정입니다.</p>
-      <p>총 투입 원금 ${formatUsd(stock.principal)}</p>
-    </article>
-    <article class="summary-card">
-      <p class="section-kicker">Selected</p>
-      <h3>${data.stock.name} (${data.stock.code})</h3>
-      <p>평가금액 ${formatUsd(stock.endingValue)} · 손익 ${formatUsd(stock.profit)}</p>
-      <p>누적수익률 ${formatPercent(stock.cumulativeReturn)}</p>
-    </article>
-    <article class="summary-card">
-      <p class="section-kicker">NASDAQ</p>
-      <h3>${benchmark.name}</h3>
-      <p>평가금액 ${formatUsd(benchmark.endingValue)} · 손익 ${formatUsd(benchmark.profit)}</p>
-      <p>누적수익률 ${formatPercent(benchmark.cumulativeReturn)}</p>
-    </article>
-    <article class="summary-card ${stockBetter ? "outlook-card good" : "outlook-card bad"}">
-      <p class="section-kicker">Relative</p>
-      <h3>NASDAQ 대비</h3>
-      <p>초과 누적수익률 ${formatPercent(data.result.excessReturn)}p</p>
-      <p>초과 손익 ${formatUsd(data.result.excessProfit)}</p>
-    </article>
-  `;
-
-  ui.labNotes.innerHTML = (data.notes ?? []).map((note) => `<li>${note}</li>`).join("");
 }
 
 function renderLabStrategySummary(data) {
@@ -1151,46 +1063,6 @@ async function runBacktest() {
     ui.backtestChart.classList.add("empty-state");
     ui.backtestChart.textContent = "차트를 불러오지 못했습니다.";
     ui.backtestNotes.innerHTML = "";
-  }
-}
-
-async function runLabDca() {
-  if (!state.selectedStock?.code) {
-    renderLabIdleState();
-    ui.labSummary.classList.remove("empty-state");
-    ui.labSummary.innerHTML = `<div class="error-card">먼저 미국 주식 또는 ETF를 선택하세요.</div>`;
-    return;
-  }
-
-  const years = Number(ui.labYears.value || "0");
-  const months = Number(ui.labMonths.value || "0");
-  const monthlyAmount = Number(ui.labMonthlyAmount.value || "0");
-  const safeYears = Number.isFinite(years) ? Math.max(0, Math.trunc(years)) : 0;
-  const safeMonths = Number.isFinite(months) ? Math.max(0, Math.trunc(months)) : 0;
-  const safeMonthlyAmount = Number.isFinite(monthlyAmount) ? Math.max(0, Math.trunc(monthlyAmount)) : 0;
-
-  renderLabLoading();
-  try {
-    const params = new URLSearchParams({
-      mode: "dca",
-      code: state.selectedStock.code,
-      years: String(safeYears),
-      months: String(safeMonths),
-      monthly: String(safeMonthlyAmount),
-    });
-    if (state.selectedStock.assetType) {
-      params.set("assetType", state.selectedStock.assetType);
-    }
-    const data = await fetchJson(`/api/backtest?${params.toString()}`);
-    renderLabSummary(data);
-    renderLabChart(data);
-    setActiveTab("lab");
-  } catch (error) {
-    ui.labSummary.classList.remove("empty-state");
-    ui.labSummary.innerHTML = `<div class="error-card">${error.message}</div>`;
-    ui.labChart.classList.add("empty-state");
-    ui.labChart.textContent = "차트를 불러오지 못했습니다.";
-    ui.labNotes.innerHTML = "";
   }
 }
 
@@ -1520,10 +1392,6 @@ function attachEvents() {
     runBacktest();
   });
 
-  ui.runLabDca.addEventListener("click", () => {
-    runLabDca();
-  });
-
   ui.runLabFear.addEventListener("click", () => {
     runLabFearStrategy();
   });
@@ -1562,7 +1430,7 @@ async function boot() {
     "미국 종목 검색은 SEC 종목 마스터와 FMP ETF 목록을 합쳐 즉시 필터링합니다.",
     "재무제표 탭은 FMP 분기 재무와 가격 데이터를 기준으로 핵심 지표를 계산합니다.",
     "백테스팅 탭은 여러 매매 전략을 NASDAQ Composite와 비교합니다.",
-    "실험실 탭은 매월 같은 금액을 투자했을 때 선택 종목과 NASDAQ Composite의 적립식 성과를 비교합니다.",
+    "실험실 탭은 공포매매 변형을 선택 종목과 NASDAQ Composite 기준으로 비교합니다.",
   ]);
   renderBacktestTarget(null);
   renderBacktestIdleState();
