@@ -360,12 +360,17 @@ function simulateLowVolatilityStrategy(stockSeries, startDate, endDate) {
   });
 }
 
-function simulateVixStrategy(stockSeries, vixSeries, startDate, endDate) {
+function simulateVixStrategy(stockSeries, vixSeries, startDate, endDate, config = {}) {
+  const buyAt = config.buyAt ?? 30;
+  const sellAt = config.sellAt ?? 20;
+  const label = config.label ?? `공포지수 (VIX ${buyAt} 이상 매수, ${sellAt} 이하 매도)`;
+  const shortLabel = config.shortLabel ?? "공포지수";
   const vixLookup = new Map(vixSeries.map((row) => [row.date, row.close]));
   const points = [];
   let portfolioValue = 100;
   let priorPosition = 0;
   let regime = 0;
+  let panicSeen = false;
 
   for (let index = 0; index < stockSeries.length; index += 1) {
     const row = stockSeries[index];
@@ -380,8 +385,14 @@ function simulateVixStrategy(stockSeries, vixSeries, startDate, endDate) {
 
     const previousVix = vixLookup.get(stockSeries[index - 1]?.date);
     if (previousVix != null) {
-      if (previousVix >= 30) regime = 1;
-      else if (previousVix <= 20) regime = 0;
+      if (typeof config.nextPosition === "function") {
+        regime = config.nextPosition({ stockSeries, index, regime, previousVix, panicSeen });
+      } else {
+        if (previousVix >= buyAt) regime = 1;
+        else if (previousVix <= sellAt) regime = 0;
+      }
+      if (previousVix >= buyAt) panicSeen = true;
+      if (previousVix <= sellAt) panicSeen = false;
     }
 
     points.push({
@@ -396,10 +407,40 @@ function simulateVixStrategy(stockSeries, vixSeries, startDate, endDate) {
   }
 
   return {
-    label: "공포지수 (VIX 30 이상 매수, 20 이하 매도)",
-    shortLabel: "공포지수",
+    label,
+    shortLabel,
     points,
   };
+}
+
+function simulateVixRecoveryStrategy(stockSeries, vixSeries, startDate, endDate) {
+  return simulateVixStrategy(stockSeries, vixSeries, startDate, endDate, {
+    buyAt: 30,
+    sellAt: 20,
+    label: "공포 회복형 (VIX 30 경험 후 28 이하 진정 시 매수, 20 이하 매도)",
+    shortLabel: "공포 회복형",
+    nextPosition: ({ regime, previousVix, panicSeen }) => {
+      if (panicSeen && previousVix <= 28 && previousVix > 20) return 1;
+      if (previousVix <= 20) return 0;
+      return regime;
+    },
+  });
+}
+
+function simulateVixTrendFilterStrategy(stockSeries, vixSeries, startDate, endDate) {
+  return simulateVixStrategy(stockSeries, vixSeries, startDate, endDate, {
+    buyAt: 30,
+    sellAt: 20,
+    label: "공포+추세 필터 (VIX 30 이상 + 200일선 상회 매수, 20 이하 매도)",
+    shortLabel: "공포+추세",
+    nextPosition: ({ stockSeries: series, index, regime, previousVix }) => {
+      const previousClose = series[index - 1]?.close;
+      const sma200 = averageClose(series, index - 1, 200);
+      if (previousVix >= 30 && previousClose != null && sma200 != null && previousClose > sma200) return 1;
+      if (previousVix <= 20) return 0;
+      return regime;
+    },
+  });
 }
 
 function simulateNasdaqBenchmark(benchmarkSeries, startDate, endDate) {
@@ -667,7 +708,19 @@ export async function getUSBacktestDataAny(code, env, years = 0, months = 0, str
   const normalizedYears = Number.isFinite(years) ? Math.max(0, Math.trunc(years)) : 0;
   const normalizedMonths = Number.isFinite(months) ? Math.max(0, Math.trunc(months)) : 0;
   const normalizedStrategy = String(strategy || "trend").toLowerCase();
-  const strategyNames = ["trend", "vix", "momentum", "rsi", "breakout", "lowvol", "all"];
+  const strategyNames = [
+    "trend",
+    "vix",
+    "vix_early",
+    "vix_deep",
+    "vix_recovery",
+    "vix_trend",
+    "momentum",
+    "rsi",
+    "breakout",
+    "lowvol",
+    "all",
+  ];
 
   if (normalizedYears === 0 && normalizedMonths === 0) {
     throw new Error("보유 기간은 최소 1개월 이상이어야 합니다.");
@@ -685,7 +738,8 @@ export async function getUSBacktestDataAny(code, env, years = 0, months = 0, str
 
   const stockPromise = loadMetaAndSeries(code, extendedFrom, to, env);
   const benchmarkPromise = loadMetaAndSeries("^IXIC", extendedFrom, to, env);
-  const vixPromise = ["vix", "all"].includes(normalizedStrategy)
+  const needsVix = normalizedStrategy === "all" || normalizedStrategy.startsWith("vix");
+  const vixPromise = needsVix
     ? loadMetaAndSeries("^VIX", extendedFrom, to, env)
     : Promise.resolve({ series: [] });
 
@@ -703,6 +757,22 @@ export async function getUSBacktestDataAny(code, env, years = 0, months = 0, str
   const strategyFactories = {
     trend: () => simulateTrendStrategy(stockSeries, stockStart.date, stockEnd.date),
     vix: () => simulateVixStrategy(stockSeries, vixSeries, stockStart.date, stockEnd.date),
+    vix_early: () =>
+      simulateVixStrategy(stockSeries, vixSeries, stockStart.date, stockEnd.date, {
+        buyAt: 25,
+        sellAt: 18,
+        label: "공포 조기진입 (VIX 25 이상 매수, 18 이하 매도)",
+        shortLabel: "공포 조기진입",
+      }),
+    vix_deep: () =>
+      simulateVixStrategy(stockSeries, vixSeries, stockStart.date, stockEnd.date, {
+        buyAt: 35,
+        sellAt: 22,
+        label: "극단 공포매수 (VIX 35 이상 매수, 22 이하 매도)",
+        shortLabel: "극단 공포",
+      }),
+    vix_recovery: () => simulateVixRecoveryStrategy(stockSeries, vixSeries, stockStart.date, stockEnd.date),
+    vix_trend: () => simulateVixTrendFilterStrategy(stockSeries, vixSeries, stockStart.date, stockEnd.date),
     momentum: () => simulateMomentumStrategy(stockSeries, stockStart.date, stockEnd.date),
     rsi: () => simulateRsiStrategy(stockSeries, stockStart.date, stockEnd.date),
     breakout: () => simulateBreakoutStrategy(stockSeries, stockStart.date, stockEnd.date),
@@ -825,6 +895,14 @@ export async function getUSBacktestDataAny(code, env, years = 0, months = 0, str
           "추세 전환 전략은 전일 기준 50일 이동평균이 200일 이동평균을 상회하면 매수 상태로 전환하고, 반대로 내려가면 현금 상태로 전환합니다.",
         vix:
           "공포지수 전략은 전일 VIX가 30 이상이면 매수 상태로 전환하고, 20 이하이면 매도 상태로 전환하는 단순 리스크 오프 방식입니다.",
+        vix_early:
+          "공포 조기진입 전략은 전일 VIX가 25 이상이면 더 빠르게 매수하고, 18 이하로 충분히 안정될 때 매도하는 변형입니다.",
+        vix_deep:
+          "극단 공포매수 전략은 전일 VIX가 35 이상인 강한 패닉 구간에서만 매수하고, 22 이하에서 현금화하는 보수적 변형입니다.",
+        vix_recovery:
+          "공포 회복형 전략은 VIX 30 이상을 경험한 뒤 28 이하로 진정되는 구간에서 매수하고, 20 이하에서는 현금화합니다.",
+        vix_trend:
+          "공포+추세 필터 전략은 VIX 30 이상이면서 종목이 200일 이동평균 위에 있을 때만 매수해 약세 추세의 하락 칼날을 피하도록 설계했습니다.",
         momentum:
           "모멘텀 전략은 전일 종가가 200일 이동평균 위에 있고 최근 63거래일 수익률이 양수일 때만 매수 상태를 유지합니다.",
         rsi:

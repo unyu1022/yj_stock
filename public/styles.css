@@ -463,6 +463,10 @@ body {
   cursor: not-allowed;
 }
 
+.secondary-action {
+  background: #6b2737;
+}
+
 .chart-card {
   padding: 16px;
   border-radius: 18px;

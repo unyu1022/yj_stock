@@ -33,7 +33,9 @@ const ui = {
   labMonthlyAmount: document.querySelector("#lab-monthly-amount"),
   labYears: document.querySelector("#lab-years"),
   labMonths: document.querySelector("#lab-months"),
+  labFearStrategy: document.querySelector("#lab-fear-strategy"),
   runLabDca: document.querySelector("#run-lab-dca"),
+  runLabFear: document.querySelector("#run-lab-fear"),
   labSummary: document.querySelector("#labSummary"),
   labChart: document.querySelector("#labChart"),
   labNotes: document.querySelector("#labNotes"),
@@ -849,6 +851,13 @@ function renderLabLoading() {
   ui.labChart.innerHTML = `<div class="loading-card">원금과 NASDAQ 비교 차트를 준비하고 있습니다...</div>`;
 }
 
+function renderLabFearLoading() {
+  ui.labSummary.classList.remove("empty-state");
+  ui.labSummary.innerHTML = `<div class="loading-card">공포매매 실험 결과를 계산하고 있습니다...</div>`;
+  ui.labChart.classList.remove("empty-state");
+  ui.labChart.innerHTML = `<div class="loading-card">공포매매 전략과 NASDAQ 비교 차트를 준비하고 있습니다...</div>`;
+}
+
 function buildChartPath(points, key, width, height, padding, minValue, maxValue) {
   const span = Math.max(1, maxValue - minValue);
   return points
@@ -1033,6 +1042,81 @@ function renderLabSummary(data) {
   ui.labNotes.innerHTML = (data.notes ?? []).map((note) => `<li>${note}</li>`).join("");
 }
 
+function renderLabStrategySummary(data) {
+  const stock = data.result.stock;
+  const benchmark = data.result.benchmark;
+  const strategyBetter = data.result.excessCagr >= 0;
+
+  ui.labSummary.classList.remove("empty-state");
+  ui.labSummary.innerHTML = `
+    <article class="summary-card">
+      <p class="section-kicker">Fear Strategy</p>
+      <h3>${data.strategy.label}</h3>
+      <p>${data.stock.name} (${data.stock.code})에 적용한 공포매매 실험 결과입니다.</p>
+      <p>매매 전환 횟수 ${stock.trades ?? 0}회</p>
+    </article>
+    <article class="summary-card">
+      <p class="section-kicker">Selected</p>
+      <h3>${data.stock.name} (${data.stock.code})</h3>
+      <p>누적수익률 ${stock.totalReturn}% · CAGR ${stock.cagr}%</p>
+      <p>${stock.startDate} 시작, ${stock.endDate} 종료 기준입니다.</p>
+    </article>
+    <article class="summary-card">
+      <p class="section-kicker">NASDAQ</p>
+      <h3>${benchmark.name}</h3>
+      <p>누적수익률 ${benchmark.totalReturn}% · CAGR ${benchmark.cagr}%</p>
+      <p>${benchmark.startDate} 시작, ${benchmark.endDate} 종료 기준입니다.</p>
+    </article>
+    <article class="summary-card ${strategyBetter ? "outlook-card good" : "outlook-card bad"}">
+      <p class="section-kicker">Relative</p>
+      <h3>NASDAQ 대비</h3>
+      <p>초과 누적수익률 ${data.result.excessReturn}%p · 초과 CAGR ${data.result.excessCagr}%p</p>
+    </article>
+  `;
+
+  ui.labNotes.innerHTML = (data.notes ?? []).map((note) => `<li>${note}</li>`).join("");
+}
+
+function renderLabStrategyChart(data) {
+  const points = data.chartSeries ?? [];
+  if (!points.length) {
+    ui.labChart.classList.add("empty-state");
+    ui.labChart.textContent = "차트를 만들 데이터가 부족합니다.";
+    return;
+  }
+
+  const values = points.flatMap((point) => [point.stockValue, point.benchmarkValue]);
+  const minValue = Math.min(...values);
+  const maxValue = Math.max(...values);
+  const width = 720;
+  const height = 320;
+  const padding = 28;
+  const stockPath = buildChartPath(points, "stockValue", width, height, padding, minValue, maxValue);
+  const benchmarkPath = buildChartPath(points, "benchmarkValue", width, height, padding, minValue, maxValue);
+  const start = points[0]?.date;
+  const end = points[points.length - 1]?.date;
+
+  ui.labChart.classList.remove("empty-state");
+  ui.labChart.innerHTML = `
+    <div class="chart-wrap">
+      <div class="chart-meta">
+        <span>기준값 100에서 시작한 공포매매 전략 성과 비교</span>
+        <span>${start} ~ ${end}</span>
+      </div>
+      <svg class="chart-svg" viewBox="0 0 ${width} ${height}" role="img" aria-label="공포매매 전략 비교 차트">
+        <line x1="${padding}" y1="${height - padding}" x2="${width - padding}" y2="${height - padding}" stroke="rgba(20,32,51,0.18)" stroke-width="1" />
+        <line x1="${padding}" y1="${padding}" x2="${padding}" y2="${height - padding}" stroke="rgba(20,32,51,0.18)" stroke-width="1" />
+        <path d="${benchmarkPath}" fill="none" stroke="#b96d2b" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" />
+        <path d="${stockPath}" fill="none" stroke="#0d2a45" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" />
+      </svg>
+      <div class="chart-legend">
+        <span class="legend-item"><span class="legend-swatch stock"></span>${data.strategy.shortLabel}</span>
+        <span class="legend-item"><span class="legend-swatch benchmark"></span>NASDAQ Composite (^IXIC)</span>
+      </div>
+    </div>
+  `;
+}
+
 async function runBacktest() {
   if (!state.selectedStock?.code) {
     renderBacktestIdleState();
@@ -1100,6 +1184,43 @@ async function runLabDca() {
     const data = await fetchJson(`/api/backtest?${params.toString()}`);
     renderLabSummary(data);
     renderLabChart(data);
+    setActiveTab("lab");
+  } catch (error) {
+    ui.labSummary.classList.remove("empty-state");
+    ui.labSummary.innerHTML = `<div class="error-card">${error.message}</div>`;
+    ui.labChart.classList.add("empty-state");
+    ui.labChart.textContent = "차트를 불러오지 못했습니다.";
+    ui.labNotes.innerHTML = "";
+  }
+}
+
+async function runLabFearStrategy() {
+  if (!state.selectedStock?.code) {
+    renderLabIdleState();
+    ui.labSummary.classList.remove("empty-state");
+    ui.labSummary.innerHTML = `<div class="error-card">먼저 미국 주식 또는 ETF를 선택하세요.</div>`;
+    return;
+  }
+
+  const years = Number(ui.labYears.value || "0");
+  const months = Number(ui.labMonths.value || "0");
+  const safeYears = Number.isFinite(years) ? Math.max(0, Math.trunc(years)) : 0;
+  const safeMonths = Number.isFinite(months) ? Math.max(0, Math.trunc(months)) : 0;
+
+  renderLabFearLoading();
+  try {
+    const params = new URLSearchParams({
+      code: state.selectedStock.code,
+      years: String(safeYears),
+      months: String(safeMonths),
+      strategy: ui.labFearStrategy.value,
+    });
+    if (state.selectedStock.assetType) {
+      params.set("assetType", state.selectedStock.assetType);
+    }
+    const data = await fetchJson(`/api/backtest?${params.toString()}`);
+    renderLabStrategySummary(data);
+    renderLabStrategyChart(data);
     setActiveTab("lab");
   } catch (error) {
     ui.labSummary.classList.remove("empty-state");
@@ -1401,6 +1522,10 @@ function attachEvents() {
 
   ui.runLabDca.addEventListener("click", () => {
     runLabDca();
+  });
+
+  ui.runLabFear.addEventListener("click", () => {
+    runLabFearStrategy();
   });
 }
 
