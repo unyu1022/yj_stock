@@ -807,7 +807,7 @@ function renderBacktestTarget(stock) {
     return;
   }
 
-  ui.backtestTarget.textContent = `${stock.name} (${stock.code}) 기준으로 선택 전략을 검증합니다. 추세 전환, 공포지수, 모멘텀, RSI 역추세, 돌파 매매, 저변동성 추세를 같은 기간의 NASDAQ Composite와 비교할 수 있습니다.`;
+  ui.backtestTarget.textContent = `${stock.name} (${stock.code}) 기준으로 선택 전략을 검증합니다. 추세 전환, 공포지수, 모멘텀, RSI 역추세, 돌파 매매, 저변동성 추세, 5조건 종합 전략을 같은 기간의 NASDAQ Composite와 비교할 수 있습니다.`;
 }
 
 function renderLabTarget(stock) {
@@ -1430,6 +1430,7 @@ async function boot() {
     "미국 종목 검색은 SEC 종목 마스터와 FMP ETF 목록을 합쳐 즉시 필터링합니다.",
     "재무제표 탭은 FMP 분기 재무와 가격 데이터를 기준으로 핵심 지표를 계산합니다.",
     "백테스팅 탭은 여러 매매 전략을 NASDAQ Composite와 비교합니다.",
+    "5조건 종합 전략은 추세, 모멘텀, RSI, 변동성, 돌파 조건을 합산해 매수·매도 신호를 만듭니다.",
     "실험실 탭은 공포매매 변형을 선택 종목과 NASDAQ Composite 기준으로 비교합니다.",
   ]);
   renderBacktestTarget(null);

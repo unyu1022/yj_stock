@@ -360,6 +360,90 @@ function simulateLowVolatilityStrategy(stockSeries, startDate, endDate) {
   });
 }
 
+function simulateFiveSignalStrategy(stockSeries, vixSeries, startDate, endDate) {
+  const vixLookup = new Map(vixSeries.map((row) => [row.date, row.close]));
+  const points = [];
+  let portfolioValue = 100;
+  let priorPosition = 0;
+  let regime = 0;
+
+  for (let index = 0; index < stockSeries.length; index += 1) {
+    const row = stockSeries[index];
+    if (row.date < startDate || row.date > endDate || row.close == null) continue;
+
+    if (points.length > 0 && priorPosition === 1) {
+      const previousCloseForReturn = stockSeries[index - 1]?.close;
+      if (previousCloseForReturn != null && previousCloseForReturn > 0) {
+        portfolioValue *= row.close / previousCloseForReturn;
+      }
+    }
+
+    const previousClose = stockSeries[index - 1]?.close;
+    const sma20 = averageClose(stockSeries, index - 1, 20);
+    const sma50 = averageClose(stockSeries, index - 1, 50);
+    const sma100 = averageClose(stockSeries, index - 1, 100);
+    const sma200 = averageClose(stockSeries, index - 1, 200);
+    const oneMonthReturn = priceReturn(stockSeries, index - 1, 21);
+    const threeMonthReturn = priceReturn(stockSeries, index - 1, 63);
+    const rsi = computeRsi(stockSeries, index - 1, 14);
+    const volatility = annualizedVolatility(stockSeries, index - 1, 20);
+    const priorHigh55 = highestClose(stockSeries, index - 2, 55);
+    const priorLow20 = lowestClose(stockSeries, index - 2, 20);
+    const previousVix = vixLookup.get(stockSeries[index - 1]?.date);
+
+    if (
+      previousClose != null &&
+      sma20 != null &&
+      sma50 != null &&
+      sma100 != null &&
+      sma200 != null &&
+      oneMonthReturn != null &&
+      threeMonthReturn != null &&
+      rsi != null &&
+      volatility != null
+    ) {
+      const signals = [
+        previousClose > sma200 && sma50 > sma200,
+        threeMonthReturn > 0 && oneMonthReturn > -3,
+        rsi >= 35 && rsi <= 65 && previousClose > sma20,
+        volatility < 40 && (previousVix == null || previousVix < 30),
+        previousClose > sma100 && (priorHigh55 == null || previousClose >= priorHigh55 * 0.97),
+      ];
+      const buyScore = signals.filter(Boolean).length;
+      const sellSignals = [
+        previousClose < sma100,
+        threeMonthReturn < -5,
+        rsi >= 72,
+        volatility >= 55 || (previousVix != null && previousVix >= 35),
+        priorLow20 != null && previousClose <= priorLow20,
+      ];
+      const sellScore = sellSignals.filter(Boolean).length;
+
+      if (regime === 0 && buyScore >= 3) {
+        regime = 1;
+      } else if (regime === 1 && (previousClose < sma200 || sellScore >= 2)) {
+        regime = 0;
+      }
+    }
+
+    points.push({
+      date: row.date,
+      value: round(portfolioValue),
+      position: priorPosition,
+      signal: regime,
+      vix: previousVix != null ? round(previousVix) : null,
+    });
+
+    priorPosition = regime;
+  }
+
+  return {
+    label: "5조건 종합 전략 (추세+모멘텀+RSI+변동성+돌파)",
+    shortLabel: "5조건 종합",
+    points,
+  };
+}
+
 function simulateVixStrategy(stockSeries, vixSeries, startDate, endDate, config = {}) {
   const buyAt = config.buyAt ?? 30;
   const sellAt = config.sellAt ?? 20;
@@ -774,6 +858,7 @@ export async function getUSBacktestDataAny(code, env, years = 0, months = 0, str
     "rsi",
     "breakout",
     "lowvol",
+    "five_signal",
     "all",
   ];
 
@@ -793,7 +878,7 @@ export async function getUSBacktestDataAny(code, env, years = 0, months = 0, str
 
   const stockPromise = loadMetaAndSeries(code, extendedFrom, to, env);
   const benchmarkPromise = loadMetaAndSeries("^IXIC", extendedFrom, to, env);
-  const needsVix = normalizedStrategy === "all" || normalizedStrategy.startsWith("vix");
+  const needsVix = normalizedStrategy === "all" || normalizedStrategy.startsWith("vix") || normalizedStrategy === "five_signal";
   const vixPromise = needsVix
     ? loadMetaAndSeries("^VIX", extendedFrom, to, env)
     : Promise.resolve({ series: [] });
@@ -835,6 +920,7 @@ export async function getUSBacktestDataAny(code, env, years = 0, months = 0, str
     rsi: () => simulateRsiStrategy(stockSeries, stockStart.date, stockEnd.date),
     breakout: () => simulateBreakoutStrategy(stockSeries, stockStart.date, stockEnd.date),
     lowvol: () => simulateLowVolatilityStrategy(stockSeries, stockStart.date, stockEnd.date),
+    five_signal: () => simulateFiveSignalStrategy(stockSeries, vixSeries, stockStart.date, stockEnd.date),
   };
 
   if (normalizedStrategy === "all") {
@@ -975,6 +1061,8 @@ export async function getUSBacktestDataAny(code, env, years = 0, months = 0, str
           "돌파 매매 전략은 전일 종가가 직전 55거래일 고가를 넘으면 매수하고, 직전 20거래일 저가를 이탈하면 현금화합니다.",
         lowvol:
           "저변동성 추세 전략은 전일 종가가 100일 이동평균 위에 있고 20일 연율화 변동성이 35% 미만일 때만 매수 상태를 유지합니다.",
+        five_signal:
+          "5조건 종합 전략은 전일 기준 추세, 모멘텀, RSI 회복, 변동성 안정, 돌파 근접 조건 중 3개 이상이 충족되면 매수하고, 200일선 이탈 또는 약세 신호 2개 이상이면 매도합니다.",
       }[normalizedStrategy],
       "비교 기준은 같은 기간의 NASDAQ Composite (^IXIC) 단순 보유 성과입니다.",
       "누적수익률은 시작 시점 100 기준 총수익률이며 CAGR은 해당 기간의 연복리 수익률입니다.",
