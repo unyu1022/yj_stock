@@ -229,10 +229,13 @@
                       <option value="vix_deep">극단 공포: VIX 35 매수 / 22 매도</option>
                       <option value="vix_recovery">회복형: VIX 급등 후 진정 구간 매수</option>
                       <option value="vix_trend">추세 필터: VIX 공포 + 200일선 상회</option>
+                      <option value="vix_oversold">과매도 반등: VIX 공포 + RSI 35 이하</option>
+                      <option value="vix_drawdown">낙폭 매수: VIX 공포 + 63일 고점 대비 -10%</option>
+                      <option value="vix_cooldown">진정 확인: VIX 패닉 후 20일선 회복</option>
                     </select>
                   </div>
                   <p>
-                    위 투자 기간을 그대로 사용해 선택 종목과 NASDAQ Composite를 비교합니다. 같은 공포 신호라도 진입 민감도와 매도 조건을 바꿔 성과를 확인할 수 있습니다.
+                    위 투자 기간을 그대로 사용해 선택 종목과 NASDAQ Composite를 비교합니다. 같은 공포 신호라도 진입 민감도, 기술적 확인 조건, 매도 조건을 바꿔 성과를 확인할 수 있습니다.
                   </p>
                   <button id="run-lab-fear" class="primary-action secondary-action" type="button">공포매매 실험 실행</button>
                 </div>
